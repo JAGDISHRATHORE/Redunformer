@@ -1,0 +1,11 @@
+name: qwen3-1.7b
+model: hf
+pretrained: Qwen/Qwen3-1.7B-Instruct
+dtype: bfloat16
+device_map: auto
+tasks:
+  - hellaswag
+  - piqa
+batch_size: auto
+seed: 42
+output_dir: experiments/baseline
