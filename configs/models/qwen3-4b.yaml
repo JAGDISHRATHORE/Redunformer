@@ -1,6 +1,6 @@
 name: qwen3-4b
 model: hf
-pretrained: Qwen/Qwen3-4B-Instruct
+pretrained: Qwen/Qwen3-4B
 dtype: bfloat16
 device_map: auto
 tasks:

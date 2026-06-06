@@ -11,6 +11,7 @@ endif
 
 RUN_FLAGS := --rm $(GPU_FLAGS) \
 	-v $(PROJECT_DIR)/experiments:/app/experiments \
+	-v $(PROJECT_DIR)/configs:/app/configs \
 	-v redunformer_hf_cache:/root/.cache/huggingface
 
 .PHONY: help build verify smoke smoke-fast qwen-small qwen shell
