@@ -13,7 +13,7 @@ Requires **NVIDIA GPU** with Docker GPU support (`--gpus all`) or Podman on mlsp
 
 **Windows:** install [GNU Make](https://strawberryperl.com/) (e.g. Strawberry Perl → `C:\Strawberry\c\bin` on PATH) and Docker Desktop with GPU support.
 
-**Validated locally (Weight branch):** `make verify` + `make smoke` on RTX 3060 Laptop — see `reports/weight_level/week1-2-baseline.md`.
+**Validated locally (Weight branch):** `make verify`, `make smoke`, `make qwen-small` on RTX 3060 Laptop — see [baseline runs report](reports/weight_level/baseline_runs_2026-06-06.md).
 
 ### 1. Build the container
 
@@ -36,8 +36,8 @@ Checks imports and configs inside the GPU container. Downloads nothing from Hugg
 ```bash
 make smoke              # gpt2, limit=0.01 by default
 make smoke LIMIT=0.05
-make qwen-small         # Qwen3-1.7B
-make qwen               # Qwen3-4B
+make qwen-small         # Qwen3-1.7B (intermediate run on tight VRAM)
+make qwen               # Qwen3-4B — main baseline
 ```
 
 On mlsp:
@@ -52,6 +52,7 @@ make CONTAINER=podman qwen
 ```bash
 docker run --rm --gpus all \
   -v "$(pwd)/experiments:/app/experiments" \
+  -v "$(pwd)/configs:/app/configs" \
   -v redunformer_hf_cache:/root/.cache/huggingface \
   redunformer \
   python scripts/run_baseline.py --config configs/models/gpt2.yaml --limit 0.05
@@ -59,17 +60,29 @@ docker run --rm --gpus all \
 
 ## Model configs
 
-Model choice is a YAML file under `configs/models/`:
+Model choice is a YAML file under `configs/models/`. The Makefile mounts `configs/` into the container so YAML edits apply without `make build`.
 
 | Config | Model | Use case |
 |--------|-------|----------|
 | `gpt2.yaml` | `gpt2` | Smoke test |
-| `qwen3-1.7b.yaml` | `Qwen/Qwen3-1.7B-Instruct` | Light GPU baseline |
-| `qwen3-4b.yaml` | `Qwen/Qwen3-4B-Instruct` | Main baseline |
+| `qwen3-1.7b.yaml` | `Qwen/Qwen3-1.7B` | Light GPU baseline (6 GB VRAM) |
+| `qwen3-4b.yaml` | `Qwen/Qwen3-4B` | **Main baseline** |
+
+Hugging Face repo names for Qwen3 do not use an `-Instruct` suffix.
 
 Change `pretrained`, `tasks`, `seed`, and `dtype` in the YAML. Weights are downloaded from Hugging Face on first run and cached in the `redunformer_hf_cache` volume.
 
-Recommended: **8GB+ VRAM** for Qwen3-4B. RTX 3060 Laptop (6 GB) — try `make qwen-small` first.
+Recommended: **8GB+ VRAM** for Qwen3-4B (`make qwen`). RTX 3060 Laptop (6 GB) — use `make qwen-small` to validate the pipeline, then run `make qwen` on a machine with enough VRAM or mlsp.
+
+## Baseline results so far
+
+Reference metrics before pruning (0-shot, lm-eval, seed=42). Full tables: [baseline_runs_2026-06-06.md](reports/weight_level/baseline_runs_2026-06-06.md).
+
+| Run | Model | Tasks | Key metrics |
+|-----|-------|-------|-------------|
+| Smoke | `gpt2` | hellaswag (1%) | acc_norm 0.436 |
+| Interim | `Qwen/Qwen3-1.7B` | hellaswag, piqa | hellaswag acc_norm 0.604, piqa acc 0.726 |
+| **Main baseline** | `Qwen/Qwen3-4B` | hellaswag, piqa, arc_easy | **not run yet** — `make qwen` |
 
 ## Weeks 1–2 checklist
 
@@ -77,19 +90,18 @@ Recommended: **8GB+ VRAM** for Qwen3-4B. RTX 3060 Laptop (6 GB) — try `make qw
 |------|------|
 | yes | Repo scaffold, Docker + uv, lm-eval wiring |
 | yes | `make verify`, `make smoke` (gpt2 on GPU) |
-| no | `make qwen-small` or `make qwen` (main baseline) |
-| no | Note in `reports/weight_level/week1-2-baseline.md` with Qwen metrics |
-
-Details and smoke results: `reports/weight_level/week1-2-baseline.md`.
+| yes | `make qwen-small` (Qwen3-1.7B interim baseline) |
+| yes | Baseline note with metrics in `reports/weight_level/` |
+| no | **`make qwen` — Qwen3-4B main baseline** |
 
 ## Project layout
 
 ```text
-configs/models/     model + eval configs
-src/redundancy/     shared library (models, eval, plotting)
-scripts/            CLI entrypoints
-experiments/        JSON results (gitignored)
-reports/weight_level/  group notes and deliverables
+configs/models/          model + eval configs (mounted into container)
+src/redundancy/          shared library (models, eval, plotting)
+scripts/                 CLI entrypoints
+experiments/baseline/    JSON results (gitignored)
+reports/weight_level/    group notes and deliverables
 ```
 
 ## Reproducibility
@@ -98,6 +110,8 @@ Each run writes:
 
 - `experiments/baseline/<model>.json` from lm-eval
 - `experiments/baseline/<model>.meta.json` with config path, command, seed, tasks, timestamp
+
+Raw JSON stays gitignored (lm-eval outputs can be large; many runs ahead). Reproducibility comes from config + command + seed — re-run `make qwen` to regenerate. Summary metrics live in `reports/weight_level/`.
 
 ## Portable setup
 
