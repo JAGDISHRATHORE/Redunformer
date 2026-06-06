@@ -7,7 +7,13 @@ Cross-granularity redundancy analysis for large language models (SoSe 2026).
 
 ## Quick start
 
-Requires **NVIDIA GPU** with Docker GPU support (`--gpus all`) or Podman on mlsp (`--device nvidia.com/gpu=all`)
+Requires **NVIDIA GPU** with Docker GPU support (`--gpus all`) or Podman on mlsp (`--device nvidia.com/gpu=all`).
+
+**Driver note:** the container ships `torch 2.12+cu130`. Host NVIDIA driver must support **CUDA 13.x** (e.g. driver **610+** on Windows). Older drivers fail with `NVIDIA driver too old`.
+
+**Windows:** install [GNU Make](https://strawberryperl.com/) (e.g. Strawberry Perl → `C:\Strawberry\c\bin` on PATH) and Docker Desktop with GPU support.
+
+**Validated locally (Weight branch):** `make verify` + `make smoke` on RTX 3060 Laptop — see `reports/weight_level/week1-2-baseline.md`.
 
 ### 1. Build the container
 
@@ -63,7 +69,18 @@ Model choice is a YAML file under `configs/models/`:
 
 Change `pretrained`, `tasks`, `seed`, and `dtype` in the YAML. Weights are downloaded from Hugging Face on first run and cached in the `redunformer_hf_cache` volume.
 
-Recommended: **8GB+ VRAM** for Qwen3-4B (e.g. RTX 3060 or better).
+Recommended: **8GB+ VRAM** for Qwen3-4B. RTX 3060 Laptop (6 GB) — try `make qwen-small` first.
+
+## Weeks 1–2 checklist
+
+| Done | Task |
+|------|------|
+| yes | Repo scaffold, Docker + uv, lm-eval wiring |
+| yes | `make verify`, `make smoke` (gpt2 on GPU) |
+| no | `make qwen-small` or `make qwen` (main baseline) |
+| no | Note in `reports/weight_level/week1-2-baseline.md` with Qwen metrics |
+
+Details and smoke results: `reports/weight_level/week1-2-baseline.md`.
 
 ## Project layout
 

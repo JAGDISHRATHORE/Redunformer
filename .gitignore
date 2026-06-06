@@ -14,3 +14,6 @@ experiments/**/*.json
 *.log
 
 notebooks/.ipynb_checkpoints/
+
+# Local paper notes and reading summaries (not for repo)
+notes/
