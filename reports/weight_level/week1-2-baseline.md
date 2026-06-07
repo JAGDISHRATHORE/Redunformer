@@ -1,94 +1,98 @@
 # Weeks 1–2: Baseline pipeline (Weight group)
 
 **Branch:** `Weight`  
-**Status:** pipeline validated on GPU; Qwen baseline pending
+**Status:** complete  
+**Detailed run log:** [baseline_runs_2026-06-06.md](baseline_runs_2026-06-06.md)
 
 ## Goal (seminar Weeks 1–2)
 
 - Shared baseline pipeline in repo (Docker + uv + lm-eval)
 - Load ≥1 HF causal LM and ≥1 benchmark dataset
-- Save structured JSON results + short note with model, tasks, command, metrics
+- Run baseline evaluation, save structured JSON + short note
+
+---
+
+## Deliverable checklist
+
+| PDF requirement | Status |
+|-----------------|--------|
+| Clone repo, branch `Weight` | Done |
+| Python env with uv (`pyproject.toml`, `uv.lock`, Dockerfile) | Done |
+| Load HF causal LM | Done — gpt2, Qwen3-1.7B, Qwen3-4B |
+| Load dataset(s) | Done — hellaswag, piqa, arc_easy (via lm-eval) |
+| Baseline eval (lm-eval-harness) | Done |
+| JSON + `.meta.json` (command, seed) | Done (local, gitignored) |
+| Short note with model, tasks, command, metrics | Done (this file + `baseline_runs_2026-06-06.md`) |
 
 ---
 
 ## Pipeline status
 
-| Step | Command | Status | Notes |
-|------|---------|--------|-------|
-| Clone + checkout | `git checkout Weight` | Done | |
-| Docker image | `make build` | Done | ~12 min, image ~29 GB |
-| Env check | `make verify` | Done | imports + 3 YAML configs, no HF download |
-| Smoke (gpt2) | `make smoke` | Done | GPU `cuda:0`, RTX 3060 Laptop |
-| Qwen baseline | `make qwen-small` / `make qwen` | **TODO** | main model for group report |
-| Note (this file) | — | In progress | fill Qwen results after run |
+| Step | Command | Machine | Status |
+|------|---------|---------|--------|
+| Docker image | `make build` | RTX 3060 Laptop | Done |
+| Env check | `make verify` | RTX 3060 Laptop | Done |
+| Smoke | `make smoke` | RTX 3060 Laptop | Done |
+| Interim baseline | `make qwen-small` | RTX 3060 Laptop | Done |
+| **Main baseline** | `make CONTAINER=podman qwen` | **mlsp4** | Done |
 
 ---
 
-## Validated run: gpt2 smoke
+## Main baseline (reference for pruning)
 
-**Machine:** Windows, RTX 3060 Laptop, Docker Desktop  
-**Driver:** NVIDIA 610.47 (CUDA UMD 13.3) — required for `torch 2.12+cu130` in container  
-**Earlier failure:** driver 566.36 → `NVIDIA driver too old (12070)` until update
+**Model:** `Qwen/Qwen3-4B` (open-weight Qwen3, no `-Instruct` suffix on HF)  
+**Why this model:** seminar model list includes Qwen3; 4B is our group main baseline; weight-level pruning (magnitude, later SparseGPT) will use the same checkpoint.
 
-**Command:**
+**Eval:** lm-evaluation-harness, 0-shot multiple choice (log-likelihood), seed=42, bfloat16.
+
+**Command (mlsp4):**
 
 ```bash
-make smoke
-# equivalent: python scripts/run_baseline.py --config configs/models/gpt2.yaml --limit 0.01
+make CONTAINER=podman qwen
+# equivalent: python scripts/run_baseline.py --config configs/models/qwen3-4b.yaml
 ```
 
-**Config:** `configs/models/gpt2.yaml`  
-- Model: `gpt2`  
-- Task: `hellaswag`  
-- Seed: `42`  
-- dtype: `float32`  
-- limit: `0.01` (Makefile default; yaml default is `0.05`)
+**Tasks:** hellaswag, piqa, arc_easy
 
-**Results (hellaswag, 1% subset):**
+| Task | acc | acc_norm |
+|------|-----|----------|
+| hellaswag | 0.5214 | **0.6844** |
+| piqa | 0.7492 | 0.7476 |
+| arc_easy | 0.8060 | 0.7849 |
 
-| Metric | Value |
-|--------|-------|
-| acc | 0.3564 |
-| acc_norm | 0.4356 |
+Full tables, runtime, and comparison with 1.7B: [baseline_runs_2026-06-06.md](baseline_runs_2026-06-06.md).
 
 **Artifacts (local, gitignored):**
 
-- `experiments/baseline/gpt2.json`
-- `experiments/baseline/gpt2.meta.json`
-
-CPU-only smoke was also run manually before driver fix — same acc (~0.356), confirms pipeline logic.
+- `experiments/baseline/Qwen_Qwen3-4B.json`
+- `experiments/baseline/Qwen_Qwen3-4B.meta.json`
 
 ---
 
-## TODO before Weeks 1–2 is complete
+## Other runs (sanity / interim)
 
-1. **`make qwen-small`** (Qwen3-1.7B) or **`make qwen`** (Qwen3-4B) on GPU  
-   - Record all task metrics from JSON  
-   - Copy command from `.meta.json`
-2. **Update this note** with Qwen model choice justification (why Qwen3, size vs VRAM)
-3. **Optional:** announce working pipeline in group Mattermost channel (supervisor suggestion)
-4. **Optional:** PR from `Weight` if group wants review (not required by PDF)
+| Run | Command | Purpose |
+|-----|---------|---------|
+| gpt2 smoke | `make smoke` | Pipeline sanity check (hellaswag 1%) |
+| Qwen3-1.7B | `make qwen-small` | Interim baseline on 6 GB laptop VRAM |
 
-No SSH / mlsp required for closing Weeks 1–2 if local GPU run succeeds.
+Metrics for both: [baseline_runs_2026-06-06.md](baseline_runs_2026-06-06.md).
 
 ---
 
-## Model choice (draft)
+## Infrastructure notes
 
-**Planned main baseline:** `Qwen/Qwen3-4B-Instruct` (or `1.7B` if 6 GB VRAM tight on laptop)
-
-- Open-weight, fits seminar model list (Qwen3)
-- Same pipeline as gpt2 smoke — only YAML + `make` target changes
-- Weight-level pruning experiments (SparseGPT) will target this model later
+- **Local laptop:** Windows, RTX 3060 6 GB, Docker, driver 610.47+ (CUDA 13.x for container torch).
+- **mlsp4:** RTX 2080 Ti 11 GB, podman. Dockerfile on server uses `docker.io/nvidia/cuda:...` for podman registry resolution.
+- **mlsp access:** SSH to mlsp2/4/7 from TU network (`130.83.*`); VPN blocked from Wohnheim — use campus WiFi or eduroam.
+- **Reproducibility:** each run logs model, tasks, seed, full command in `.meta.json`.
 
 ---
 
 ## Reproducibility checklist
 
-Each eval run must log (auto in `.meta.json`):
-
-- [x] model id (`gpt2`)
-- [x] tasks (`hellaswag`)
+- [x] model id (`Qwen/Qwen3-4B`)
+- [x] tasks (hellaswag, piqa, arc_easy)
 - [x] seed (`42`)
-- [x] full eval command
-- [ ] Qwen run — pending
+- [x] full eval command in `.meta.json`
+- [x] baseline metrics recorded in report

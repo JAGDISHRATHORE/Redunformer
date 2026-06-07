@@ -82,7 +82,7 @@ Reference metrics before pruning (0-shot, lm-eval, seed=42). Full tables: [basel
 |-----|-------|-------|-------------|
 | Smoke | `gpt2` | hellaswag (1%) | acc_norm 0.436 |
 | Interim | `Qwen/Qwen3-1.7B` | hellaswag, piqa | hellaswag acc_norm 0.604, piqa acc 0.726 |
-| **Main baseline** | `Qwen/Qwen3-4B` | hellaswag, piqa, arc_easy | **not run yet** — `make qwen` |
+| **Main baseline** | `Qwen/Qwen3-4B` | hellaswag, piqa, arc_easy | hellaswag acc_norm **0.684**, piqa acc **0.749**, arc_easy acc **0.806** (mlsp4) |
 
 ## Weeks 1–2 checklist
 
@@ -92,7 +92,7 @@ Reference metrics before pruning (0-shot, lm-eval, seed=42). Full tables: [basel
 | yes | `make verify`, `make smoke` (gpt2 on GPU) |
 | yes | `make qwen-small` (Qwen3-1.7B interim baseline) |
 | yes | Baseline note with metrics in `reports/weight_level/` |
-| no | **`make qwen` — Qwen3-4B main baseline** |
+| yes | **`make qwen` — Qwen3-4B main baseline (mlsp4)** |
 
 ## Project layout
 

@@ -9,6 +9,9 @@ __pycache__/
 experiments/**/*.json
 !experiments/.gitkeep
 
+# Downloaded / copied model weights (not for repo)
+models/
+
 .DS_Store
 .env
 *.log

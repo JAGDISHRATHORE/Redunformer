@@ -44,6 +44,35 @@ Official Hugging Face model IDs do not use the `-Instruct` suffix:
 - `Qwen/Qwen3-1.7B-Instruct` → `Qwen/Qwen3-1.7B`
 - `Qwen/Qwen3-4B-Instruct` → `Qwen/Qwen3-4B`
 
-## Still pending
+## Main baseline: Qwen3-4B (mlsp4)
 
-- `make qwen` (Qwen3-4B, hellaswag + piqa + arc_easy)
+- **Machine:** mlsp4, RTX 2080 Ti (11 GB VRAM), AMD Ryzen 7 3800X, 64 GB RAM
+- **Container:** podman (`make CONTAINER=podman qwen`); Dockerfile patched to `docker.io/nvidia/cuda:...` for podman short-name resolution
+- **Config:** `configs/models/qwen3-4b.yaml`
+- **Command:** `make CONTAINER=podman qwen`
+- **Model:** `Qwen/Qwen3-4B`, bfloat16, seed=42, full eval (no limit)
+- **Tasks:** hellaswag, piqa, arc_easy
+- **Runtime:** ~87 min, batch_size auto → 9
+
+| Task      | acc    | acc_norm | n     |
+|-----------|--------|----------|-------|
+| hellaswag | 0.5214 | 0.6844   | 10042 |
+| piqa      | 0.7492 | 0.7476   | 1838  |
+| arc_easy  | 0.8060 | 0.7849   | 2376  |
+
+Reference baseline before pruning. 0-shot multiple choice via lm-eval log-likelihood.
+
+- **Output:** `experiments/baseline/Qwen_Qwen3-4B.json` (local copy from mlsp run)
+- **Meta:** `experiments/baseline/Qwen_Qwen3-4B.meta.json`
+- **Timestamp:** 2026-06-06T23:50:54Z
+
+### 1.7B vs 4B (same tasks where comparable)
+
+| Task      | 1.7B acc_norm | 4B acc_norm |
+|-----------|---------------|-------------|
+| hellaswag | 0.6038        | **0.6844**  |
+| piqa      | 0.7203        | **0.7476**  |
+
+## Weeks 1–2 status
+
+All baseline deliverables complete: pipeline, smoke (gpt2), interim (1.7B), **main baseline (4B on mlsp4)**.
