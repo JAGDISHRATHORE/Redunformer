@@ -15,6 +15,17 @@ uv sync
 uv run python scripts/run_baseline.py --model gpt2 --dataset Salesforce/wikitext --subset wikitext-2-raw-v1
 ```
 
+## Week 1–2 Checklist
+
+- ✅ Clone the shared Git repository
+- ✅ Set up the Python environment with uv
+- ✅ Load at least one Hugging Face causal language model (GPT-2, Qwen3-4B)
+- ✅ Load at least one dataset (WikiText-2, HellaSwag, PIQA, ARC Easy)
+- ✅ Run a baseline evaluation using a custom perplexity script and lm-evaluation-harness
+- ✅ Save results in a structured format (JSON) in `experiments/`
+- ✅ Working baseline pipeline in the shared repository
+- ✅ Short note describing model, dataset, evaluation command, and baseline result (see below)
+
 ## Baseline Results (Week 1–2)
 
 ### Models
