@@ -46,7 +46,6 @@ Thumbs.db
 
 # Project specific ignores
 # Ignore output files but keep the directories
-experiments/*
 !experiments/.gitkeep
 models/*
 !models/.gitkeep
