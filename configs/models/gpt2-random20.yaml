@@ -1,0 +1,12 @@
+name: gpt2-random20
+model: hf
+pretrained: experiments/pruned/gpt2-random20
+dtype: float32
+
+tasks:
+  - piqa
+
+batch_size: 1
+seed: 42
+
+output_dir: experiments/random_pruning
