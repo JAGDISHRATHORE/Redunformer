@@ -7,9 +7,9 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from redundancy.models import load_model_and_tokenizer
-from redundancy.pruning import random_prune_model, count_parameters
+from redundancy.random_pruning import random_prune_model, count_parameters
 
-MODEL_NAME = "gpt2"
+MODEL_NAME = sys.argv[1]
 
 print("Loading model...")
 
@@ -25,7 +25,8 @@ random_prune_model(
     sparsity=0.20,
 )
 
-save_path = "experiments/pruned/gpt2-random20"
+model_name_safe = MODEL_NAME.split("/")[-1].lower()
+save_path = f"experiments/pruned/{model_name_safe}-random20"
 
 print(f"Saving to {save_path}")
 
