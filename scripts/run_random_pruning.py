@@ -7,7 +7,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from redundancy.models import load_model_and_tokenizer
-from redundancy.random_pruning import random_prune_model, count_parameters
+from redundancy.pruning.random_pruning import random_prune_model, count_parameters
 
 MODEL_NAME = sys.argv[1]
 
