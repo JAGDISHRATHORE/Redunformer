@@ -121,3 +121,6 @@ Each run produces a JSON file in `experiments/`:
 ```
 
 When `--skip-lm-eval` is not set, `lm_eval` contains per-task metrics (e.g. `acc_norm` for HellaSwag).
+
+## Docker build command
+docker build --network host -t gpt-container:gpt .
