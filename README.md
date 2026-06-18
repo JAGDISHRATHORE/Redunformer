@@ -47,7 +47,89 @@ make CONTAINER=podman verify
 make CONTAINER=podman qwen
 ```
 
-### 4. Run without Make
+### 4. Run pruning pipeline (GPU)
+
+The pruning pipeline provides an interactive workflow for:
+
+1. Downloading a model from Hugging Face
+2. Applying a pruning algorithm
+3. Saving the pruned model
+4. Running lm-eval-harness evaluation
+5. Saving evaluation results
+
+```bash
+make pipeline
+```
+
+On mlsp:
+
+```bash
+make CONTAINER=podman pipeline
+```
+
+### During execution the user is prompted to select:
+
+model (GPT-2, Qwen3-1.7B, Qwen3-4B, ...)
+pruning algorithm
+algorithm-specific parameters
+
+The resulting model is stored under:
+
+	experiments/pruned/
+
+Evaluation results are stored under:
+
+	experiments/baseline/
+
+
+### Pruning algorithm API
+
+All pruning algorithms must be placed in:
+
+```text
+src/redundancy/pruning/
+```
+
+Each algorithm is implemented as a standalone Python module.
+
+Required interface:
+
+```text
+ALGORITHM_NAME = "random_pruning"
+
+PARAMETERS = {
+    "sparsity": {
+        "type": float,
+        "prompt": "Sparsity (0-1)"
+    }
+}
+
+def prune(model, **kwargs):
+    ...
+```
+
+## Required objects
+
+| Object | Purpose |
+|--------|---------|
+| `ALGORITHM_NAME` | Human-readable algorithm name |
+| `PARAMETERS` | Parameters requested from the user |
+| `prune()` | Applies pruning to the model |
+
+### Adding a new algorithm
+
+Create a new file:
+
+```bash
+src/redundancy/pruning/my_algorithm.py
+```
+
+Implement the required interface.
+
+The pruning pipeline automatically discovers available algorithms and presents them in the selection menu. 
+No modifications to run_pruning_pipeline.py are required.
+
+### 5. Run without Make
 
 ```bash
 docker run --rm --gpus all \

@@ -51,3 +51,15 @@ qwen:
 
 shell:
 	$(CONTAINER) run -it $(RUN_FLAGS) --entrypoint bash $(IMAGE)
+
+pipeline:
+	podman run -it --rm \
+		--security-opt=label=disable \
+		--device /dev/nvidia0 \
+		--device /dev/nvidiactl \
+		--device /dev/nvidia-uvm \
+		--device /dev/nvidia-uvm-tools \
+		-v /usr/lib/x86_64-linux-gnu:/usr/lib/x86_64-linux-gnu:ro \
+		-v $(PWD):/app \
+		localhost/redunformer \
+		python scripts/run_pruning_pipeline.py

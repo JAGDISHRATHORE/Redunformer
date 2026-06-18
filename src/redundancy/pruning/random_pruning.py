@@ -50,3 +50,10 @@ def random_prune_model(model, sparsity: float, seed: int = 42) -> None:
         f"Pruned {total_pruned:,} / {total_weights:,} "
         f"weights ({actual:.2%})"
     )
+
+def prune_model(model, sparsity: float, seed: int = 42):
+    random_prune_model(
+        model=model,
+        sparsity=sparsity,
+        seed=seed,
+    )
