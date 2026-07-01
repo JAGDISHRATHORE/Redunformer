@@ -3,6 +3,7 @@ import json
 import os
 import random
 import sys
+from collections import defaultdict
 
 import torch
 
@@ -114,6 +115,39 @@ def get_target_weight(model, target_name):
     raise ValueError(f"Could not find target weight: {target_name}")
 
 
+def get_num_layers(model):
+    layer_ids = set()
+
+    for name, _ in model.named_parameters():
+        parts = name.split(".")
+        if len(parts) > 3 and parts[0] == "model" and parts[1] == "layers":
+            if parts[2].isdigit():
+                layer_ids.add(int(parts[2]))
+
+    if not layer_ids:
+        raise ValueError("Could not automatically detect model layers.")
+
+    return max(layer_ids) + 1
+
+
+def build_target_name(layer, matrix_name):
+    component = MATRICES[matrix_name]
+    return f"model.layers.{layer}.{component}.{matrix_name}.weight"
+
+
+def ratio_short_name(prune_ratio):
+    return str(int(prune_ratio * 100))
+
+
+def save_json(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    with open(path, "w") as f:
+        json.dump(data, f, indent=4)
+
+    print(f"Results saved to {path}")
+
+
 def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=None):
     target_weight = get_target_weight(model, target_name)
     original_weight = target_weight.detach().clone()
@@ -137,6 +171,7 @@ def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=Non
 
     print(f"Total full tiles: {num_tiles}")
     print(f"Pruned tiles: {num_pruned}")
+
     ppl = evaluate_perplexity(model, tokenizer, dataset)
 
     print(f"Final Perplexity after pruning: {ppl:.4f}")
@@ -156,26 +191,232 @@ def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=Non
     }
 
 
-def build_target_name(layer, matrix_name):
-    component = MATRICES[matrix_name]
-    return f"model.layers.{layer}.{component}.{matrix_name}.weight"
+def load_layer_json_files(experiment_dir):
+    data = []
+
+    for filename in os.listdir(experiment_dir):
+        if not filename.endswith(".json"):
+            continue
+
+        path = os.path.join(experiment_dir, filename)
+
+        with open(path, "r") as f:
+            item = json.load(f)
+
+        if "results" in item and "layer" in item and "method" in item:
+            data.append(item)
+
+    return data
 
 
-def save_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
+def make_plots_from_json(experiment_dir, baseline_ppl):
+    import matplotlib.pyplot as plt
+    import numpy as np
 
-    with open(path, "w") as f:
-        json.dump(data, f, indent=4)
+    plot_dir = os.path.join(experiment_dir, "plots")
+    os.makedirs(plot_dir, exist_ok=True)
 
-    print(f"\nResults saved to {path}")
+    all_data = load_layer_json_files(experiment_dir)
 
+    if not all_data:
+        raise ValueError(f"No valid JSON files found in {experiment_dir}")
 
-def method_short_name(method):
-    return method
+    grouped = defaultdict(list)
 
+    for item in all_data:
+        method = item["method"]
+        seed = item.get("seed", None)
 
-def ratio_short_name(prune_ratio):
-    return str(int(prune_ratio * 100))
+        if method == "random":
+            key = f"random_seed{seed}"
+        else:
+            key = method
+
+        grouped[key].append(item)
+
+    for key, summaries in grouped.items():
+        summaries = sorted(summaries, key=lambda x: x["layer"])
+        layers = [s["layer"] for s in summaries]
+
+        matrix_to_values = {m: [] for m in MATRICES.keys()}
+
+        for summary in summaries:
+            result_map = {r["matrix"]: r["perplexity"] for r in summary["results"]}
+            for matrix in MATRICES.keys():
+                matrix_to_values[matrix].append(result_map[matrix])
+
+        plt.figure(figsize=(15, 7), dpi=200)
+
+        for matrix, values in matrix_to_values.items():
+            plt.plot(layers, values, marker="o", linewidth=1.8, label=matrix)
+
+        plt.axhline(
+            baseline_ppl,
+            linestyle="--",
+            linewidth=1.2,
+            label=f"Baseline PPL = {baseline_ppl}",
+        )
+
+        plt.title(f"{key}: perplexity across all layers")
+        plt.xlabel("Layer")
+        plt.ylabel("Perplexity")
+        plt.xticks(layers)
+        plt.grid(True, alpha=0.3)
+        plt.legend(ncol=2)
+        plt.tight_layout()
+
+        out = os.path.join(plot_dir, f"{key}_all_layers_projection_trend.png")
+        plt.savefig(out, bbox_inches="tight")
+        plt.close()
+
+        print(f"Saved plot: {out}")
+
+    mean_by_group = {}
+
+    for key, summaries in grouped.items():
+        values = []
+
+        for summary in summaries:
+            layer = summary["layer"]
+            mean_ppl = sum(r["perplexity"] for r in summary["results"]) / len(summary["results"])
+            values.append((layer, mean_ppl))
+
+        mean_by_group[key] = sorted(values, key=lambda x: x[0])
+
+    plt.figure(figsize=(15, 7), dpi=200)
+
+    for key, values in mean_by_group.items():
+        layers = [x[0] for x in values]
+        mean_ppl = [x[1] for x in values]
+        plt.plot(layers, mean_ppl, marker="o", linewidth=2, label=key)
+
+    plt.axhline(
+        baseline_ppl,
+        linestyle="--",
+        linewidth=1.2,
+        label=f"Baseline PPL = {baseline_ppl}",
+    )
+
+    plt.title("Mean layer sensitivity: magnitude vs random")
+    plt.xlabel("Layer")
+    plt.ylabel("Mean perplexity across 7 projection matrices")
+    plt.grid(True, alpha=0.3)
+    plt.legend()
+    plt.tight_layout()
+
+    out = os.path.join(plot_dir, "magnitude_vs_random_mean_layer_trend.png")
+    plt.savefig(out, bbox_inches="tight")
+    plt.close()
+    print(f"Saved plot: {out}")
+
+    magnitude_key = None
+    random_keys = []
+
+    for key in grouped.keys():
+        if key == "magnitude":
+            magnitude_key = key
+        if key.startswith("random_seed"):
+            random_keys.append(key)
+
+    if magnitude_key is not None and random_keys:
+        for random_key in random_keys:
+            mag_map = {}
+            rand_map = {}
+
+            for summary in grouped[magnitude_key]:
+                layer = summary["layer"]
+                for result in summary["results"]:
+                    mag_map[(layer, result["matrix"])] = result["perplexity"]
+
+            for summary in grouped[random_key]:
+                layer = summary["layer"]
+                for result in summary["results"]:
+                    rand_map[(layer, result["matrix"])] = result["perplexity"]
+
+            common_layers = sorted(set(l for l, _ in mag_map.keys()) & set(l for l, _ in rand_map.keys()))
+
+            for matrix in MATRICES.keys():
+                layers = []
+                mag_vals = []
+                rand_vals = []
+
+                for layer in common_layers:
+                    key_pair = (layer, matrix)
+                    if key_pair in mag_map and key_pair in rand_map:
+                        layers.append(layer)
+                        mag_vals.append(mag_map[key_pair])
+                        rand_vals.append(rand_map[key_pair])
+
+                if not layers:
+                    continue
+
+                plt.figure(figsize=(12, 6), dpi=200)
+                plt.plot(layers, mag_vals, marker="o", linewidth=2, label="Magnitude")
+                plt.plot(layers, rand_vals, marker="o", linewidth=2, label=random_key)
+
+                plt.axhline(
+                    baseline_ppl,
+                    linestyle="--",
+                    linewidth=1.2,
+                    label=f"Baseline PPL = {baseline_ppl}",
+                )
+
+                plt.title(f"{matrix}: magnitude vs {random_key}")
+                plt.xlabel("Layer")
+                plt.ylabel("Perplexity")
+                plt.xticks(layers)
+                plt.grid(True, alpha=0.3)
+                plt.legend()
+                plt.tight_layout()
+
+                out = os.path.join(
+                    plot_dir,
+                    f"{matrix}_magnitude_vs_{random_key}_layer_trend.png",
+                )
+                plt.savefig(out, bbox_inches="tight")
+                plt.close()
+                print(f"Saved plot: {out}")
+
+            diff_layers = common_layers
+            diff_matrix = []
+
+            for matrix in MATRICES.keys():
+                row = []
+                for layer in diff_layers:
+                    key_pair = (layer, matrix)
+                    if key_pair in mag_map and key_pair in rand_map:
+                        row.append(mag_map[key_pair] - rand_map[key_pair])
+                    else:
+                        row.append(float("nan"))
+                diff_matrix.append(row)
+
+            diff_matrix = np.array(diff_matrix)
+
+            plt.figure(figsize=(16, 6), dpi=200)
+            im = plt.imshow(diff_matrix, aspect="auto")
+
+            plt.colorbar(im, label="Magnitude PPL - Random PPL")
+            plt.yticks(range(len(MATRICES)), list(MATRICES.keys()))
+            plt.xticks(range(len(diff_layers)), diff_layers)
+            plt.xlabel("Layer")
+            plt.ylabel("Projection matrix")
+            plt.title(f"Difference heatmap: magnitude - {random_key}")
+
+            for i in range(diff_matrix.shape[0]):
+                for j in range(diff_matrix.shape[1]):
+                    val = diff_matrix[i, j]
+                    if not np.isnan(val):
+                        plt.text(j, i, f"{val:.2f}", ha="center", va="center", fontsize=7)
+
+            plt.tight_layout()
+
+            out = os.path.join(
+                plot_dir,
+                f"magnitude_minus_{random_key}_difference_heatmap.png",
+            )
+            plt.savefig(out, bbox_inches="tight")
+            plt.close()
+            print(f"Saved plot: {out}")
 
 
 def main():
@@ -186,7 +427,7 @@ def main():
     parser.add_argument("--subset", type=str, default="wikitext-2-raw-v1")
 
     parser.add_argument("--tile-size", type=int, default=64)
-    parser.add_argument("--prune-ratio", type=float, default=0.05)
+    parser.add_argument("--prune-ratio", type=float, default=0.20)
 
     parser.add_argument(
         "--method",
@@ -215,13 +456,39 @@ def main():
         type=int,
         nargs="+",
         default=None,
-        help="Layers to run when using --all-matrices, e.g. --layers 0 12 27",
+        help="Specific layers to run, e.g. --layers 0 12 27",
+    )
+
+    parser.add_argument(
+        "--all-layers",
+        action="store_true",
+        help="Run every transformer layer detected in the model.",
     )
 
     parser.add_argument(
         "--all-matrices",
         action="store_true",
-        help="Run all seven projection matrices for each provided layer.",
+        help="Run all seven projection matrices for each layer.",
+    )
+
+    parser.add_argument(
+        "--experiment-dir",
+        type=str,
+        default="experiments/full_scan",
+        help="Directory where JSON files and plots will be saved.",
+    )
+
+    parser.add_argument(
+        "--baseline-ppl",
+        type=float,
+        default=20.0445,
+        help="Baseline perplexity shown as a reference line in plots.",
+    )
+
+    parser.add_argument(
+        "--plot-only",
+        action="store_true",
+        help="Only create plots from existing JSON files.",
     )
 
     parser.add_argument(
@@ -233,25 +500,36 @@ def main():
 
     args = parser.parse_args()
 
+    if args.plot_only:
+        make_plots_from_json(args.experiment_dir, args.baseline_ppl)
+        return
+
     model, tokenizer = load_model_and_tokenizer(args.model)
     dataset = load_evaluation_dataset(args.dataset, args.subset, split="test")
 
+    if args.all_layers:
+        num_layers = get_num_layers(model)
+        layers = list(range(num_layers))
+        print(f"Detected {num_layers} layers: {layers}")
+    elif args.layers is not None:
+        layers = args.layers
+    else:
+        layers = None
+
     if args.all_matrices:
-        if args.layers is None or len(args.layers) == 0:
-            raise ValueError(
-                "When using --all-matrices, please provide --layers, e.g. --layers 0 12 27"
-            )
+        if layers is None or len(layers) == 0:
+            raise ValueError("Use --layers or --all-layers with --all-matrices")
 
-        for seed in args.seeds:
-            print("\n" + "=" * 70)
-            print(f"Running experiments with RANDOM SEED = {seed}")
-            print("=" * 70)
+        seeds_to_run = args.seeds if args.method == "random" else [None]
 
-            for layer in args.layers:
+        for seed in seeds_to_run:
+            for layer in layers:
                 layer_results = []
 
                 print("\n#######################################")
                 print(f"Running Layer {layer}")
+                print(f"Method: {args.method}")
+                print(f"Seed: {seed if args.method == 'random' else None}")
                 print("#######################################")
 
                 for matrix_name in MATRICES.keys():
@@ -270,13 +548,14 @@ def main():
                     result["matrix"] = matrix_name
                     layer_results.append(result)
 
-                output_path = (
-                    f"experiments/"
-                    f"layer{layer}_"
-                    f"{method_short_name(args.method)}_"
-                    f"{ratio_short_name(args.prune_ratio)}"
-                    f"_seed{seed}.json"
-                )
+                ratio = ratio_short_name(args.prune_ratio)
+
+                if args.method == "random":
+                    filename = f"layer{layer}_random_p{ratio}_seed{seed}.json"
+                else:
+                    filename = f"layer{layer}_{args.method}_p{ratio}.json"
+
+                output_path = os.path.join(args.experiment_dir, filename)
 
                 layer_summary = {
                     "model": args.model,
@@ -292,8 +571,10 @@ def main():
 
                 save_json(output_path, layer_summary)
 
+        make_plots_from_json(args.experiment_dir, args.baseline_ppl)
+
     else:
-        seed = args.seeds[0]
+        seed = args.seeds[0] if args.method == "random" else None
 
         result = run_single_experiment(
             model=model,
