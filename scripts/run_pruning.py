@@ -10,8 +10,11 @@ import torch
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../src")))
 
 from redundancy.models import load_model_and_tokenizer
-from redundancy.data import load_evaluation_dataset
+from redundancy.data import load_evaluation_dataset, load_calibration_dataset
 from redundancy.eval import evaluate_perplexity
+from redundancy.hooks import collect_gram_stats
+from redundancy.scoring import wanda_tile_scores, sparsegpt_tile_errors
+from redundancy.recovery import reconstruct_prune_tiles
 
 
 MATRICES = {
@@ -96,13 +99,46 @@ def prune_random(weight, tile_size, prune_ratio, seed):
     return len(tiles), num_prune
 
 
-def apply_pruning(weight, method, tile_size, prune_ratio, seed):
+def prune_by_scores(weight, scored_tiles, tile_size, prune_ratio):
+    """Prune the lowest-scoring tiles. scored_tiles is a list of (score, r, c)."""
+    scored_tiles = sorted(scored_tiles, key=lambda x: x[0])
+
+    num_prune = int(len(scored_tiles) * prune_ratio)
+    tiles_to_prune = [(r, c) for _, r, c in scored_tiles[:num_prune]]
+
+    zero_tiles(weight, tiles_to_prune, tile_size)
+
+    return len(scored_tiles), num_prune
+
+
+def prune_wanda(weight, tile_size, prune_ratio, col_norms):
+    scored = wanda_tile_scores(weight, col_norms, tile_size)
+    return prune_by_scores(weight, scored, tile_size, prune_ratio)
+
+
+def prune_sparsegpt(weight, tile_size, prune_ratio, hessian):
+    scored = sparsegpt_tile_errors(weight, hessian, tile_size)
+    return prune_by_scores(weight, scored, tile_size, prune_ratio)
+
+
+def prune_sparsegpt_recon(weight, tile_size, prune_ratio, hessian):
+    # Ranks by eq. 23 error AND applies the compensating weight updates in place.
+    return reconstruct_prune_tiles(weight, hessian, tile_size, prune_ratio)
+
+
+def apply_pruning(weight, method, tile_size, prune_ratio, seed, stat=None):
     if method == "magnitude":
         return prune_lowest_magnitude(weight, tile_size, prune_ratio)
     if method == "magnitude_high":
         return prune_highest_magnitude(weight, tile_size, prune_ratio)
     if method == "random":
         return prune_random(weight, tile_size, prune_ratio, seed)
+    if method == "wanda":
+        return prune_wanda(weight, tile_size, prune_ratio, stat)
+    if method == "sparsegpt":
+        return prune_sparsegpt(weight, tile_size, prune_ratio, stat)
+    if method == "sparsegpt_recon":
+        return prune_sparsegpt_recon(weight, tile_size, prune_ratio, stat)
 
     raise ValueError(f"Unknown pruning method: {method}")
 
@@ -113,6 +149,34 @@ def get_target_weight(model, target_name):
             return param
 
     raise ValueError(f"Could not find target weight: {target_name}")
+
+
+def get_target_module(model, target_name):
+    """Resolve 'model.layers.0.mlp.up_proj.weight' -> the up_proj nn.Linear module."""
+    module_path = target_name[:-len(".weight")] if target_name.endswith(".weight") else target_name
+
+    module = model
+    for attr in module_path.split("."):
+        module = module[int(attr)] if attr.isdigit() else getattr(module, attr)
+
+    return module
+
+
+def collect_stats_for_targets(model, calib_samples, target_names, method):
+    """Collect the calibration statistic each metric needs, for every target
+    matrix, in a single calibration pass. Returns {target_name: stat} where the
+    stat is the Wanda column-norm vector or the SparseGPT Gram matrix H."""
+    modules_by_name = {name: get_target_module(model, name) for name in target_names}
+    collectors = collect_gram_stats(model, modules_by_name, calib_samples)
+
+    stats = {}
+    for name, collector in collectors.items():
+        if method == "wanda":
+            stats[name] = collector.col_norms().detach().clone()
+        else:  # sparsegpt keeps the full Gram matrix
+            stats[name] = collector.H
+
+    return stats
 
 
 def get_num_layers(model):
@@ -148,7 +212,7 @@ def save_json(path, data):
     print(f"Results saved to {path}")
 
 
-def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=None):
+def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=None, stat=None):
     target_weight = get_target_weight(model, target_name)
     original_weight = target_weight.detach().clone()
 
@@ -167,6 +231,7 @@ def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=Non
         args.tile_size,
         args.prune_ratio,
         seed,
+        stat=stat,
     )
 
     print(f"Total full tiles: {num_tiles}")
@@ -422,7 +487,7 @@ def make_plots_from_json(experiment_dir, baseline_ppl):
 def main():
     parser = argparse.ArgumentParser(description="Run tile-level pruning experiment.")
 
-    parser.add_argument("--model", type=str, default="Qwen/Qwen3-0.6B")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen3-4B")
     parser.add_argument("--dataset", type=str, default="wikitext")
     parser.add_argument("--subset", type=str, default="wikitext-2-raw-v1")
 
@@ -432,8 +497,22 @@ def main():
     parser.add_argument(
         "--method",
         type=str,
-        choices=["magnitude", "magnitude_high", "random"],
+        choices=["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "sparsegpt_recon"],
         default="magnitude",
+    )
+
+    parser.add_argument(
+        "--calib-samples",
+        type=int,
+        default=128,
+        help="Number of calibration windows for wanda/sparsegpt.",
+    )
+
+    parser.add_argument(
+        "--calib-seqlen",
+        type=int,
+        default=512,
+        help="Token length of each calibration window.",
     )
 
     parser.add_argument(
@@ -481,7 +560,7 @@ def main():
     parser.add_argument(
         "--baseline-ppl",
         type=float,
-        default=20.0445,
+        default=13.2181,
         help="Baseline perplexity shown as a reference line in plots.",
     )
 
@@ -506,6 +585,15 @@ def main():
 
     model, tokenizer = load_model_and_tokenizer(args.model)
     dataset = load_evaluation_dataset(args.dataset, args.subset, split="test")
+
+    needs_calibration = args.method in ("wanda", "sparsegpt", "sparsegpt_recon")
+    calib_samples = None
+    if needs_calibration:
+        calib_samples = load_calibration_dataset(
+            tokenizer,
+            n_samples=args.calib_samples,
+            seqlen=args.calib_seqlen,
+        )
 
     if args.all_layers:
         num_layers = get_num_layers(model)
@@ -532,8 +620,17 @@ def main():
                 print(f"Seed: {seed if args.method == 'random' else None}")
                 print("#######################################")
 
+                layer_stats = None
+                if needs_calibration:
+                    target_names = [build_target_name(layer, m) for m in MATRICES.keys()]
+                    print(f"Collecting {args.method} calibration stats for layer {layer}...")
+                    layer_stats = collect_stats_for_targets(
+                        model, calib_samples, target_names, args.method
+                    )
+
                 for matrix_name in MATRICES.keys():
                     target_name = build_target_name(layer, matrix_name)
+                    stat = layer_stats[target_name] if layer_stats is not None else None
 
                     result = run_single_experiment(
                         model=model,
@@ -542,6 +639,7 @@ def main():
                         args=args,
                         target_name=target_name,
                         seed=seed,
+                        stat=stat,
                     )
 
                     result["layer"] = layer
@@ -576,6 +674,14 @@ def main():
     else:
         seed = args.seeds[0] if args.method == "random" else None
 
+        stat = None
+        if needs_calibration:
+            print(f"Collecting {args.method} calibration stats for {args.target_name}...")
+            stats = collect_stats_for_targets(
+                model, calib_samples, [args.target_name], args.method
+            )
+            stat = stats[args.target_name]
+
         result = run_single_experiment(
             model=model,
             tokenizer=tokenizer,
@@ -583,6 +689,7 @@ def main():
             args=args,
             target_name=args.target_name,
             seed=seed,
+            stat=stat,
         )
 
         output_path = args.output
