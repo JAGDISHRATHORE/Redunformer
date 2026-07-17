@@ -20,10 +20,9 @@ Numbers come from the runs in `experiments/`; plots in `experiments/*/plots/`.
    sparsity, but it flatters perplexity ~3× more than it improves actual capability, because its
    map was built from perplexity.
 
-**Status of the plan:** every element of Rathore's strategy has now run — model, tile size,
-representative layers, dense-model discipline, both metric ladders (eq. 12/22/23), the combined
-variant, and Strategy 5 (Policy A vs B). The controls, seeds, downstream accuracy, output
-divergence and the widened sparsity sweep are extensions on top of it.
+**Status of the plan: 6 of Rathore's 10 strategies are done, 4 are outstanding** — see
+"Coverage of the planned strategies" below. Present that table rather than claiming the plan is
+complete.
 
 ## Setup
 
@@ -227,6 +226,47 @@ overlap. Across layers it compounds, which is why uniform whole-model pruning co
 
 ---
 
+# Coverage of the planned strategies
+Audited against the source documents, not from memory:
+**Rathore, *Pruning Strategies Using Metrics: Wanda and SparseGPT*** (2026-07-15) — the adopted
+plan; and **Fiebiger, *Evaluation and Comparison Extensions*** (2026-07-16) — the extensions.
+
+### Rathore's plan — the backbone
+
+| | strategy | status |
+|---|---|---|
+| W1 | Representative-layer / individual-matrix screening (5 layers × 7 matrices) | ✅ done (extended to 10/20/40%) |
+| W2 | Complete-layer uniform Wanda pruning | ✅ done |
+| **W3** | **Budget-matched *layer-wide* Wanda pruning** (one layer, one budget, allocation varies *between matrices*) | ❌ **not run** |
+| **W4** | **Robust/sensitive region zoom-in** (clusters around a robust and a sensitive candidate) | ⚠️ **partial** — only the one-sided boundary cluster (32–35) |
+| W5 | Final whole-model Wanda: Policy A vs B, budget-matched | ✅ done |
+| S1 | Representative matrix reconstruction scan (mask-only vs reconstructed) | ✅ done |
+| **S2** | **Reconstruction-benefit classification** (A naturally redundant / B compensatable / C essential) | ❌ **not produced — the data already exists** |
+| S3 | Complete-layer SparseGPT reconstruction | ✅ done |
+| **S4** | **SparseGPT cluster & depth analysis** (easiest + hardest matrix types across clusters) | ⚠️ **partial** — boundary only |
+| S5 | Final whole-model SparseGPT + **combined Wanda→SparseGPT variant** | ✅ done |
+
+**The gap is the cluster/zoom-in stage (W3, W4, S2, S4).** It is also Stage 3 of the Fiebiger
+execution plan (~4 h), and it was skipped — the work jumped from whole-layer straight to
+whole-model. Notably, **S2 needs no GPU at all**: we already have mask-only and reconstructed
+perplexity for all 35 layer×matrix combinations, so the A/B/C classification is a pure analysis
+of existing JSON.
+
+### Extensions (Fiebiger) — beyond the adopted plan
+
+| | extension | status |
+|---|---|---|
+| E1 | random + magnitude controls | ✅ done |
+| E2 | 5 seeds for random, mean + range | ✅ done |
+| E3 | sparsity as a primary axis (coarse 10/20/40, fine 8-point) | ✅ done, and widened to 1/2% |
+| E4a | output-distribution divergence (KL, top-1, cosine) | ✅ done |
+| E4b | downstream task accuracy | ✅ done (⚠️ not yet for `wanda_recon`) |
+
+### Deviations from Rathore's logging template (§6)
+His template requires fields we do not record: **calibration seed**, **runtime**, and a saved
+**mask file** per run. The missing seed is the material one — it makes the runs
+non-reproducible in the sense his template intends.
+
 # Caveats
 - **One model** (Qwen3-4B), **one tile size** (32×32), **one calibration seed**.
 - ⚠️ Downstream measured for `sparsegpt_recon` (+ `wanda` @20%). **`wanda_recon` — the method we
@@ -248,7 +288,30 @@ overlap. Across layers it compounds, which is why uniform whole-model pruning co
 - All methods deterministic (bit-identical reruns); only `random` uses seeds.
 
 # Next testing marathon — flagged experiments
-Ordered by expected value.
+
+## First: finish the adopted plan (these are not new ideas — they were always scoped)
+
+**S2 — Reconstruction-benefit classification. Costs nothing.** ⭐ Rathore's Categories A
+(naturally redundant: little damage even before repair) / B (compensatable: repair fixes it) /
+C (essential: repair does not). We already have mask-only *and* reconstructed perplexity for all
+35 layer×matrix combinations — this is pure analysis of saved JSON, **no GPU**. He argues it is
+more informative than final perplexity because it separates tiles that never mattered from tiles
+whose function was redistributed. Given finding #4 (repair is everything), this classification is
+now *more* interesting than when he wrote it: it says **where** repair does its work.
+
+**W4 / S4 — Cluster & depth zoom-in.** Only the boundary cluster (32–35) was measured. His design
+is cheap by construction: pick the most robust and most sensitive *matrix types* from screening
+and run just those two across a robust cluster and a sensitive cluster — not all 7 matrices. It
+answers whether robustness belongs to the layer region, the projection type, or their interaction
+— which our current 5-layer map cannot distinguish, and which directly underpins the
+nearest-neighbour label assumption Policy B depends on.
+
+**W3 — Budget-matched *layer-wide* pruning.** We budget-matched at whole-model scale (Policy B)
+but never at *layer* scale, which is what he specified: one layer, one budget, allocation free to
+vary between its 7 matrices. It is the natural bridge between the per-matrix map and the
+whole-model policy, and cheap.
+
+## Then: what the results now suggest
 
 0. **`random_recon` — the test our own finding #4 demands.** ⭐ If selection really is irrelevant,
    then *random* tile selection + SparseGPT repair should match `wanda_recon`. If it does,
