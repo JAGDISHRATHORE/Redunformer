@@ -497,12 +497,21 @@ def make_plots_from_json(experiment_dir, baseline_ppl):
         summaries = sorted(summaries, key=lambda x: x["layer"])
         layers = [s["layer"] for s in summaries]
 
-        matrix_to_values = {m: [] for m in MATRICES.keys()}
+        # Only plot the matrices actually present. A scan restricted with --matrices (as the
+        # cluster analysis does) has a subset, and assuming all seven raises KeyError *after*
+        # every result is already on disk -- turning a cosmetic plotting failure into a
+        # non-zero exit that looks identical to a real one.
+        present = [m for m in MATRICES.keys() if all(
+            any(r["matrix"] == m for r in s["results"]) for s in summaries)]
+        matrix_to_values = {m: [] for m in present}
 
         for summary in summaries:
             result_map = {r["matrix"]: r["perplexity"] for r in summary["results"]}
-            for matrix in MATRICES.keys():
+            for matrix in present:
                 matrix_to_values[matrix].append(result_map[matrix])
+
+        if not matrix_to_values:
+            continue
 
         plt.figure(figsize=(15, 7), dpi=200)
 
@@ -531,12 +540,14 @@ def make_plots_from_json(experiment_dir, baseline_ppl):
         print(f"Saved plot: {out}")
 
     mean_by_group = {}
+    n_matrices = 0
 
     for key, summaries in grouped.items():
         values = []
 
         for summary in summaries:
             layer = summary["layer"]
+            n_matrices = max(n_matrices, len(summary["results"]))
             mean_ppl = sum(r["perplexity"] for r in summary["results"]) / len(summary["results"])
             values.append((layer, mean_ppl))
 
@@ -556,14 +567,20 @@ def make_plots_from_json(experiment_dir, baseline_ppl):
         label=f"Baseline PPL = {baseline_ppl}",
     )
 
-    plt.title("Mean layer sensitivity: magnitude vs random")
+    # Title and filename must name the methods actually plotted. These were hardcoded to
+    # "magnitude vs random", so every run -- wanda, sparsegpt, anything -- emitted a plot
+    # captioned "magnitude vs random" over data from a completely different method. The y-label
+    # likewise claimed 7 matrices even when --matrices restricts the scan to fewer.
+    methods_plotted = " vs ".join(sorted(mean_by_group))
+    plt.title(f"Mean layer sensitivity: {methods_plotted}")
     plt.xlabel("Layer")
-    plt.ylabel("Mean perplexity across 7 projection matrices")
+    plt.ylabel(f"Mean perplexity across {n_matrices} projection matri"
+               f"{'x' if n_matrices == 1 else 'ces'}")
     plt.grid(True, alpha=0.3)
     plt.legend()
     plt.tight_layout()
 
-    out = os.path.join(plot_dir, "magnitude_vs_random_mean_layer_trend.png")
+    out = os.path.join(plot_dir, "mean_layer_trend.png")
     plt.savefig(out, bbox_inches="tight")
     plt.close()
     print(f"Saved plot: {out}")
