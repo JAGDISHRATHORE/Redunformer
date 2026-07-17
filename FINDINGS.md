@@ -293,11 +293,34 @@ of existing JSON.
 
 | | extension | status |
 |---|---|---|
-| E1 | random + magnitude controls | ✅ done |
-| E2 | 5 seeds for random, mean + range | ✅ done |
-| E3 | sparsity as a primary axis (coarse 10/20/40, fine 8-point) | ✅ done, and widened to 1/2% |
+| **E1** | **random + magnitude controls at identical settings** | ⚠️ **screening scale only** |
+| **E2** | **5 seeds for random** | ⚠️ **screening scale only** |
+| E3 | sparsity as a primary axis (coarse 10/20/40, fine 8-point) | ✅ done, widened to 1/2% |
 | E4a | output-distribution divergence (KL, top-1, cosine) | ✅ done |
 | E4b | downstream task accuracy | ✅ done (⚠️ not yet for `wanda_recon`) |
+
+### Execution plan (Fiebiger §7) — stage coverage
+
+| stage | spec | status |
+|---|---|---|
+| 0 Dense baseline | full model | ✅ |
+| 1 Per-matrix screen | all + controls, 10/20/40% | ✅ |
+| **2 Whole-layer** | **all + controls**, 10/20/40% | ⚠️ **controls missing** |
+| **3 Cluster analysis** | key methods, 10/20/40%, ~4 h | ❌ **never run** |
+| **4 Whole-model sweep** | **all + controls**, 8-point grid | ⚠️ **controls missing** |
+| 5 Final + downstream | best methods | ✅ (bar `wanda_recon`) |
+
+> ⚠️ **The whole-model results currently have no control floor**, and E1 states the standard they
+> fail: *"The controls must be evaluated at identical settings... run within the same sweeps
+> rather than deferred to a separate later phase, because a control produced at mismatched
+> settings is not a valid comparison."* Screening-scale controls do **not** cover the whole-model
+> claims — Rathore §2.5 makes the same point, that different pruning scopes are different
+> experiments. Until random and magnitude run at whole-model scale, findings 1 and 4 lack the
+> floor and naive reference that make them interpretable.
+>
+> Note this is the **same experiment** as the proposed `random_recon` test: random selection at
+> whole-model scale, with and without repair, is both the floor E1 demands and the decisive test
+> of finding #4.
 
 ### Deviations from Rathore's logging template (§6)
 His template requires fields we do not record: **calibration seed**, **runtime**, and a saved
