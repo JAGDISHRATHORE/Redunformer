@@ -20,9 +20,9 @@ Numbers come from the runs in `experiments/`; plots in `experiments/*/plots/`.
    sparsity, but it flatters perplexity ~3× more than it improves actual capability, because its
    map was built from perplexity.
 
-**Status of the plan: all 10 of Rathore's strategies are done.** Of the Fiebiger extensions, only
-the Stage 4 whole-model controls remain (running) — findings 1 and 4 lack their floor until then.
-See "Coverage of the planned strategies".
+**Status of the plan: complete.** All 10 of Rathore's strategies and all 5 Fiebiger stages are
+done, including the whole-model control floor. The three headline findings (1, 2, 3) are
+downstream-anchored — see the reliability audit below.
 
 ## Setup
 
