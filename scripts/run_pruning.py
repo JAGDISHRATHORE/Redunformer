@@ -718,7 +718,7 @@ def main():
     parser.add_argument("--dataset", type=str, default="wikitext")
     parser.add_argument("--subset", type=str, default="wikitext-2-raw-v1")
 
-    parser.add_argument("--tile-size", type=int, default=64)
+    parser.add_argument("--tile-size", type=int, default=32)  # project standard (Rathore §2.4); 64 was a bug
     parser.add_argument("--prune-ratio", type=float, default=0.20)
 
     parser.add_argument(
