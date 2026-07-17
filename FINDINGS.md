@@ -55,6 +55,7 @@ right, and the planned gaps are now scheduled first.
 |---|---|---|
 | 1 | Tile redundancy is ~5% | ⚠️ **unplanned** — extends E4b/Stage 5 to a 1/2/5/10% ladder |
 | 2 | Perplexity is a nonlinear proxy | ✅ planned — E4b (downstream accuracy) |
+| 2b | Perplexity is adversarially manipulable | ⚠️ **unplanned** — Seb's targeted `o_proj` + downstream |
 | 3 | Policy B games its own metric | ✅ planned — W5/S5 (Policy A vs B) + E4b |
 | 4 | Repair ≫ selection | ✅ planned — S5's **combined Wanda→SparseGPT variant** |
 | 4b | Repair backfires at the final layers' **MLP** (not the layer) | ✅ planned — **S2** + **S4** |
@@ -71,6 +72,37 @@ right, and the planned gaps are now scheduled first.
 ✅ **Findings 1 and 4 now have their control floor** (E1/E2 at whole-model scale) — see finding
 4d. It did not confirm finding 4; it sharpened it: at 5%, selection is *worse than random*,
 and repair is the whole method.
+
+## What each finding rests on — the reliability audit
+Finding 2b (perplexity is manipulable) raises the fair question: *are our findings unreliable
+because we used perplexity?* No — and here is why, made checkable. Each finding is one of three
+kinds, in decreasing robustness:
+
+- **Downstream-anchored** — measured on task accuracy, not perplexity. Immune by construction.
+- **Control-relative** — a comparison of methods at *identical* conditions, usually against the
+  random control. A shared metric bias cancels in the comparison, so the *ranking* holds even if
+  absolute perplexity is biased. (Strongest: 4e's `random` vs `random_recon` prune the *same
+  tiles* — any bias is identical on both sides.)
+- **Perplexity-absolute** — depends on absolute perplexity or the perplexity-derived sensitivity
+  map. Carries the caveat; finding 2b is live proof that some map cells are perplexity-specific.
+
+| finding | rests on | robust to the perplexity problem? |
+|---|---|---|
+| 1 tile redundancy ~5% | **downstream** | ✅ fully |
+| 2 / 2b perplexity unreliable & manipulable | **downstream** (the ppl↔acc gap *is* the finding) | ✅ self-reinforcing |
+| 3 Policy B games its metric | **downstream** | ✅ fully |
+| 4 / 4e repair ≫ selection | control-relative (same-tile ablation) | ✅ ranking robust |
+| 4b repair backfires at final MLP | control-relative (mask vs recon, same tiles) | ✅ direction robust |
+| 4c / 4d selection vs random floor | control-relative (vs the control that shares the bias) | ✅ robust |
+| 5 "robust" does not compose | downstream (~60% capability loss) + perplexity | ✅ mostly |
+| 6 / 6b reallocation optimum | control-relative (budget-matched) | ✅ ranking robust |
+| 7 depth × matrix interaction | control-relative (o_proj vs up_proj across depth) | ⚠️ mostly; fine cell labels are perplexity-based |
+| 8 magnitude < random | control-relative (vs random control) | ✅ robust |
+| 9 sub-additive within a layer | perplexity-absolute | ⚠️ carries the caveat |
+
+**The three headline findings (1, 2, 3) are all downstream-anchored** — we ran ~11 downstream
+evals precisely so the conclusions we lead with would not rest on perplexity. Finding 2b does not
+undermine the project; it **vindicates the design choice it was built on.**
 
 # Headline findings
 
@@ -106,6 +138,30 @@ Perplexity is monotonic with capability — it doesn't point the wrong way. The 
 the mapping is **brutally nonlinear**: a 2.3× perplexity rise *reads* as mild degradation and
 *means* the model is mostly gone. It is a fine proxy in the usable regime (≤5%) and misleading
 precisely where you would use it to judge an aggressive method.
+
+## 2b. Perplexity is adversarially manipulable — improve it 13% while degrading the model ⭐⭐
+The sharpest form of finding 2. Blanket `o_proj` pruning (all 36 layers) never beats dense. But
+restricted to the layers where `o_proj` *improved in isolation* (17–21, 32, 34, 35), mask-only
+Wanda beats dense on WikiText — and the two metrics move in **opposite directions** with dose:
+
+| dose | WikiText ppl | HellaSwag | PIQA | ARC-Easy |
+|---|---|---|---|---|
+| 20% | **12.24 (−0.98)** | −0.3σ (flat) | +0.8σ (flat) | +0.7σ (flat) |
+| 40% | **11.50 (−1.72, 13% better)** | **−3.6σ (real drop)** | +0.8σ (flat) | −1.5σ |
+
+Perplexity improves monotonically (−0.98 → −1.72) while capability degrades monotonically (flat →
+a statistically-significant HellaSwag loss). At 20% it is pure gaming (perplexity up, capability
+untouched); at 40% it is gaming **plus** real damage — if you trusted perplexity you would ship a
+measurably worse model believing it 13% better.
+
+**Repair erases the perplexity win** (recon +0.07 / +0.44, not −0.98 / −1.72). Coherent: repair
+reconstructs the dense output, so it faithfully restores whatever masking removed. The "gain"
+exists only because you did *not* reconstruct.
+
+**Caveat (and it is the point):** the layers were selected on WikiText, so the perplexity win is
+partly WikiText-specific — but that is exactly what the downstream measurement exposes. Perplexity
+alone would have called this an improvement. *(Credit: Seb's experiment — a refinement of the
+blanket `o_proj` test that turned a null result into the capstone example for finding 2.)*
 
 ## 3. Policy B games the metric it was built from ⭐⭐
 Two separate results, both damning for reading perplexity as capability.
