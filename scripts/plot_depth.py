@@ -34,7 +34,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-DEPTH_DIR = "experiments/depth"
+DEPTH_DIR = "experiments/archive/depth"  # moved to archive/ (tile-64 shape-evidence)
 OUT_DIR = os.path.join(DEPTH_DIR, "plots")
 os.makedirs(OUT_DIR, exist_ok=True)
 

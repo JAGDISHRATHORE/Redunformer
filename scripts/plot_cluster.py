@@ -31,7 +31,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-S4_DIR = "experiments/screen_cluster_s4"
+S4_DIR = "experiments/archive/screen_cluster_s4"  # moved to archive/ (tile-64 shape-evidence)
 OUT_DIR = os.path.join(S4_DIR, "plots")
 os.makedirs(OUT_DIR, exist_ok=True)
 
