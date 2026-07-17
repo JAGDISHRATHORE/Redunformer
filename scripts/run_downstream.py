@@ -46,15 +46,22 @@ METHODS = ["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "spars
 
 
 def prune_whole_model(model, args, layers, calib_samples, ratio_map=None):
-    """Prune every matrix in every layer, in order, freeing each layer's stats."""
+    """Prune every matrix in every layer, in order, freeing each layer's stats.
+
+    --matrices restricts which projection types are pruned (default: all seven). This is what
+    lets us measure downstream accuracy of a targeted config like "o_proj on layers 17-21,32,34,35"
+    -- the exact model whose WikiText perplexity beat dense, to test whether that win survives on
+    real tasks or is WikiText-specific.
+    """
+    scan_matrices = getattr(args, "matrices", None) or list(MATRICES.keys())
     total_tiles = total_pruned = 0
     for layer in layers:
         stats = None
         if args.method in NEEDS_CALIB:
-            names = [build_target_name(layer, m) for m in MATRICES.keys()]
+            names = [build_target_name(layer, m) for m in scan_matrices]
             stats = collect_stats_for_targets(model, calib_samples, names, args.method)
 
-        for m in MATRICES.keys():
+        for m in scan_matrices:
             target = build_target_name(layer, m)
             w = get_target_weight(model, target)
             stat = stats[target] if stats is not None else None
@@ -79,6 +86,10 @@ def main():
     p.add_argument("--prune-ratio", type=float, default=0.20)
     p.add_argument("--policy", choices=["uniform", "sensitivity"], default="uniform")
     p.add_argument("--tile-size", type=int, default=32)
+    p.add_argument("--layers", type=int, nargs="+", default=None,
+                   help="Restrict pruning to these layers (default: all).")
+    p.add_argument("--matrices", type=str, nargs="+", default=None, choices=list(MATRICES.keys()),
+                   help="Restrict pruning to these projection types (default: all seven).")
     p.add_argument("--seed", type=int, default=42, help="Only used by --method random.")
     p.add_argument("--calib-samples", type=int, default=64)
     p.add_argument("--calib-seqlen", type=int, default=512)
@@ -94,7 +105,7 @@ def main():
     tag = "dense"
     pruned_info = None
     if not args.dense:
-        layers = list(range(get_num_layers(model)))
+        layers = args.layers if args.layers is not None else list(range(get_num_layers(model)))
 
         calib = None
         if args.method in NEEDS_CALIB:
