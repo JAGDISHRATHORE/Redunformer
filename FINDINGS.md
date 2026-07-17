@@ -58,6 +58,7 @@ right, and the planned gaps are now scheduled first.
 | 3 | Policy B games its own metric | ✅ planned — W5/S5 (Policy A vs B) + E4b |
 | 4 | Repair ≫ selection | ✅ planned — S5's **combined Wanda→SparseGPT variant** |
 | 4b | Repair backfires at layer 35 | ✅ planned — **S2** (reconstruction-benefit classification) |
+| 4c | Data-aware selection only helps at layer 0 | ✅ planned — **E1/E2 controls at Stage 2** |
 | 5 | "Robust" does not compose | ✅ planned — synthesis of W1/W2 vs Stage 4 |
 | 6 | Reallocation has an optimum | ⚠️ **mixed** — Policy B planned; depth concentration unplanned |
 | 7 | The bottleneck is layer 35 | ✅ planned — W1/S1 (layers 32–34 are an unplanned partial W4) |
@@ -205,6 +206,61 @@ It also shows finding #5 in Rathore's own taxonomy: 60% of cells are "naturally 
 
 **Practical:** exclude the final layer's MLP from reconstruction — mask it instead, or leave it
 dense. Repairing it is strictly worse than not repairing it.
+
+## 4c. Data-aware selection only earns its keep at layer 0 — the control says so ⭐⭐
+Whole-layer (Stage 2) with the controls E1 specified: random × **5 seeds** (the floor) and
+magnitude (the naive reference), same layers, same sparsities, same eval data. Each data-aware
+method is scored against the random control's per-layer seed spread (σ from 5 seeds):
+**better** = ≤ −1σ, **~tie** = |z| < 1 (indistinguishable from chance), **WORSE** = ≥ +1σ.
+
+| zone | better | ~tie | **WORSE** |
+|---|---|---|---|
+| layer 0 | **8/12** | 1/12 | 3/12 *(all magnitude)* |
+| middle (9/18/27) | 10/36 | **23/36** | 3/36 |
+| **layer 35** | **0/12** | 3/12 *(all magnitude)* | **9/12** |
+
+**Three regimes, replicated across 10/20/40%:**
+
+- **Layer 0 — data-aware is essential.** At 40% the random control *explodes* to **169.90 ± 163.59**
+  while recon holds at **0.89**. This is precisely the region E3 predicted would be most
+  informative: "where a data-aware method continues to hold while the random control has already
+  collapsed."
+- **Middle (9/18/27) — indistinguishable from chance** at 10/20% (23/36 ~tie), separating only at
+  40%. Also as E3 predicted: "methods are nearly indistinguishable at low sparsity and separate
+  only as sparsity increases."
+- **Layer 35 — every calibrated method LOSES to random, 9/9.** And at 40% the ranking **inverts
+  completely**:
+
+| L35 @40% | ΔPPL | calibration used |
+|---|---|---|
+| magnitude | **2.62** | none |
+| random | **3.01** | none |
+| sparsegpt (mask) | 4.53 | selection |
+| wanda | 4.80 | selection |
+| **sparsegpt_recon** | **5.39** | selection **+** repair |
+
+> **Damage at layer 35 scales with how much calibration a method uses.** The globally *best*
+> method is the *worst* one there; the globally worst (magnitude) is among the best. At the final
+> layer, calibration signal is not merely uninformative — it is **anti-correlated**, and using
+> more of it hurts more.
+
+This unifies with **4b** (repair backfires at L35) into one mechanism covering *both halves* of
+the method: at the final layer, calibration-local objectives — the Wanda/eq-23 ranking *and* the
+reconstruction least-squares — stop proxying next-token loss, because no downstream layer remains
+to absorb their error.
+
+**It also refines finding 4.** "Selection is near-irrelevant" was too broad. Correctly: selection
+is *indistinguishable from chance* in the middle at low sparsity, *genuinely useful* at layer 0,
+and *harmful* at layer 35. That also explains why `wanda` ≈ `eq-23` — in the bulk of the network
+they are not tied with each other, they are both tied with **random**.
+
+⚠️ **Statistics, honestly:** 5 seeds gives a noisy σ, so no individual cell is significant. The
+evidence is the *consistency* — layer 35 lands +1.5σ…+3.2σ in **9 of 9** calibrated
+method×sparsity cells, and the middle sits within noise in 23 of 36. A pattern, not a p-value.
+
+**None of this was visible before the control ran.** Without a floor, "wanda @10%, layer 18 =
+0.441" looks like a data-aware method working; it is chance. E1's rationale — *"has no meaning
+without a floor"* — was load-bearing, not a formality.
 
 ## 5. "Robust" is measured in isolation and does not compose ⭐
 Per our labels, **~81% of the model is individually "robust"** (ΔPPL ≈ 0 when pruned alone). Prune
@@ -373,8 +429,8 @@ of existing JSON.
 
 | | extension | status |
 |---|---|---|
-| **E1** | **random + magnitude controls at identical settings** | ⚠️ **screening scale only** |
-| **E2** | **5 seeds for random** | ⚠️ **screening scale only** |
+| E1 | random + magnitude controls at identical settings | ✅ screening **+ whole-layer**; ⚠️ whole-model outstanding |
+| E2 | 5 seeds for random, mean + range | ✅ screening **+ whole-layer**; ⚠️ whole-model outstanding |
 | E3 | sparsity as a primary axis (coarse 10/20/40, fine 8-point) | ✅ done, widened to 1/2% |
 | E4a | output-distribution divergence (KL, top-1, cosine) | ✅ done |
 | E4b | downstream task accuracy | ✅ done (⚠️ not yet for `wanda_recon`) |
@@ -385,7 +441,7 @@ of existing JSON.
 |---|---|---|
 | 0 Dense baseline | full model | ✅ |
 | 1 Per-matrix screen | all + controls, 10/20/40% | ✅ |
-| **2 Whole-layer** | **all + controls**, 10/20/40% | ⚠️ **controls missing** |
+| 2 Whole-layer | all + controls, 10/20/40% | ✅ **done** — controls added, see finding 4c |
 | **3 Cluster analysis** | key methods, 10/20/40%, ~4 h | ❌ **never run** |
 | **4 Whole-model sweep** | **all + controls**, 8-point grid | ⚠️ **controls missing** |
 | 5 Final + downstream | best methods | ✅ (bar `wanda_recon`) |
@@ -434,7 +490,7 @@ done. **≈ 11 h total, sequential on one GPU.**
 
 | # | task | plan ref | what it settles | est. |
 |---|---|---|---|---|
-| **1** | **Whole-layer controls** — random (5 seeds) + magnitude, 5 layers, 10/20/40% | Fiebiger Stage 2 · E1/E2 | gives Stage 2 the floor it was specified with | ~2 h |
+| ~~1~~ | ~~Whole-layer controls~~ — **DONE** (90 runs, 6/6 exit 0) → finding **4c** | Fiebiger Stage 2 · E1/E2 | the floor immediately overturned an unexamined assumption | ✅ |
 | **2** | **Cluster / depth zoom-in** — most-robust + most-sensitive matrix type across a robust cluster (15–21) and a sensitive cluster (29–35), 10/20/40%, wanda + sparsegpt_recon | **Rathore W4 + S4** · Fiebiger Stage 3 | is robustness a property of the layer region, the projection type, or their interaction? Directly tests the nearest-neighbour label assumption Policy B relies on | ~3 h |
 | **3** | **Layer-wide budget matching** — per-matrix normalised Wanda ranking pooled across one layer, prune the globally-lowest N; compare against uniform at the same tile count | **Rathore W3** | does non-uniform allocation help *within* a layer? The missing bridge between the per-matrix map and the whole-model policy. Needs ~30 lines (pooled normalised ranking; our `policy.py` only allocates by class at model scale) | ~1 h + code |
 | **4** | **Whole-model controls** — random (5 seeds) + magnitude, 8-point grid | Fiebiger Stage 4 · E1/E2 | **the floor for findings 1 and 4.** Also answers whether data-aware selection beats random *at all* at whole-model scale — untested, and finding #4 hinges on it. Subsumes the `random_recon` idea | ~5 h |

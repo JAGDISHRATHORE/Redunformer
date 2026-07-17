@@ -753,6 +753,17 @@ def main():
     )
 
     parser.add_argument(
+        "--matrices",
+        type=str,
+        nargs="+",
+        default=None,
+        choices=list(MATRICES.keys()),
+        help="With --all-matrices, restrict the scan to these projection types "
+             "(e.g. --matrices o_proj up_proj). Default: all seven. Used by the cluster "
+             "analysis, which scans only the most robust and most sensitive matrix types.",
+    )
+
+    parser.add_argument(
         "--whole-layer",
         action="store_true",
         help="Prune all seven matrices of each layer simultaneously and evaluate once.",
@@ -935,15 +946,22 @@ def main():
                 print(f"Seed: {seed if args.method == 'random' else None}")
                 print("#######################################")
 
+                # --matrices restricts the scan to specific projection types. The cluster analysis
+                # (Rathore W4/S4) is built around this: "Do not automatically repeat all seven
+                # matrix tests in every neighbouring layer. Instead, choose the most sensitive
+                # projection matrix ... the most robust projection matrix ... Run these two matrix
+                # types across both clusters."
+                scan_matrices = args.matrices or list(MATRICES.keys())
+
                 layer_stats = None
                 if needs_calibration:
-                    target_names = [build_target_name(layer, m) for m in MATRICES.keys()]
+                    target_names = [build_target_name(layer, m) for m in scan_matrices]
                     print(f"Collecting {args.method} calibration stats for layer {layer}...")
                     layer_stats = collect_stats_for_targets(
                         model, calib_samples, target_names, args.method
                     )
 
-                for matrix_name in MATRICES.keys():
+                for matrix_name in scan_matrices:
                     target_name = build_target_name(layer, matrix_name)
                     stat = layer_stats[target_name] if layer_stats is not None else None
 
