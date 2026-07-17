@@ -61,7 +61,7 @@ right, and the planned gaps are now scheduled first.
 | 4c | Data-aware selection only helps at layer 0 | ✅ planned — **E1/E2 controls at Stage 2** |
 | 5 | "Robust" does not compose | ✅ planned — synthesis of W1/W2 vs Stage 4 |
 | 6 | Reallocation has an optimum | ⚠️ **mixed** — Policy B planned; depth concentration unplanned |
-| 7 | The bottleneck is layer 35 | ✅ planned — W1/S1 (layers 32–34 are an unplanned partial W4) |
+| 7 | Robustness is the depth × matrix interaction | ✅ planned — **W4 cluster scan** |
 | 8 | Magnitude is worse than random | ✅ planned — E1/E2 (controls + seeds) |
 | 9 | Damage is sub-additive within a layer | ✅ planned — W2/S3 (whole-layer) |
 
@@ -299,24 +299,54 @@ Note: N=32 (prune only the robust zone, sensitive tail untouched) gives 1.24× �
 redundant part" works, but modestly. 24.17 is still ~1.8× dense: concentration optimizes *within*
 the broken regime, it does not unlock a new one.
 
-## 7. The bottleneck is layer 35 specifically — not "the final layers"
-`up_proj` ΔPPL @20% (newly measured 32/33/34):
+## 7. Robustness is the INTERACTION of depth × projection type ⭐⭐
+Rathore's **W4 cluster scan** (his design, exactly): the most robust and most sensitive matrix
+types from Strategy 1 (`o_proj` +0.018, `up_proj` +0.676 — measured, not assumed), run across a
+robust cluster (**15–21**, around L18) and a one-sided boundary cluster (**29–35**, around L35).
+14 layers, 3 sparsities, both `wanda` and `sparsegpt_recon`.
 
-| layer | 32 | 33 | 34 | 35 |
+His question was whether robustness belongs to the layer region, the projection type, or their
+interaction. **The interaction dominates both main effects, in every cell measured:**
+
+| method | sparsity | region effect | matrix effect | **interaction** |
 |---|---|---|---|---|
-| ΔPPL | 0.38 | 0.19 | 1.01 | **3.37** |
+| wanda | 10% | +0.281 | +0.288 | **+0.442** |
+| wanda | 20% | +0.404 | +0.505 | **+0.692** |
+| wanda | 40% | +0.575 | +0.795 | **+0.971** |
+| recon | 10% | +0.221 | +0.190 | **+0.424** |
+| recon | 20% | +0.419 | +0.405 | **+0.812** |
 
-**Layers 32–33 are robust; 34 ramps; 35 spikes.** Our policy stamped layer 35's labels onto 32–35
-by nearest-neighbour, so **two of three were mislabelled** — the truly sensitive region is ~2–4%
-of the model, not the 8% we assumed. Attention at these layers is unremarkable; the effect is
-MLP-selective, which is also why it isn't a bug (verified: identical `num_pruned`, reproduces at
-the last layer of Qwen3-0.6B).
+It replicates across both methods, so it is a property of **the model**, not of a method.
 
-**Mechanism:** layer 35 feeds the LM head with no downstream layer left to absorb its error.
+**Neither "late layers are sensitive" nor "up_proj is sensitive" is true alone** (@40%):
 
-**Consequence: Policy B is handicapped by its own labels** — it spends 0.30× multipliers
-protecting layers 32–33, which never needed it. A corrected Policy B should beat everything
-measured here. (Top of the next-marathon list.)
+| | 15 | 17 | 19 | 21 | 29 | 31 | 33 | **35** |
+|---|---|---|---|---|---|---|---|---|
+| `o_proj` | 0.02 | −0.11 | −0.24 | −0.25 | 0.13 | 0.03 | −0.01 | **−0.48** |
+| `up_proj` | 0.20 | 0.21 | 0.04 | −0.06 | 0.06 | 0.32 | 0.72 | **4.70** |
+
+**`o_proj` is robust at every depth — including layer 35, where pruning it *improves* perplexity
+(−0.48).** So layer 35 is not sensitive; **layer 35's MLP is.** Its attention is better than fine.
+
+**The boundary is measured, not assumed.** `up_proj` @40% through the sensitive cluster:
+
+> L29 **0.06** → L30 **−0.02** → L31 **0.32** → L32 **0.79** → L33 **0.72** → L34 **1.92** → L35 **4.70**
+
+Layers 29–30 are as robust as the middle. The rise begins at **31**, and the last two layers carry
+almost all of it. Our 5-layer map could only say "somewhere between 27 and 35", and Policy B
+guessed "32–35 are sensitive" — the truth is **34–35**, with 32–33 barely above the middle.
+
+**Mechanism:** layer 35 feeds the LM head with no downstream layer left to absorb its error
+(consistent with 4b and 4c: at the final layer both repair *and* selection are anti-correlated
+with what the model needs).
+
+**Two consequences:**
+- **Vindicates the per-(layer, matrix) design.** The interaction result means any depth-only or
+  matrix-type-only heuristic is wrong in principle. Our policy classifies per cell — correct.
+- **Kills the depth inheritance.** Policy B assigns unmeasured layers their nearest measured
+  neighbour's class, which is exactly what mislabelled 32–33 as sensitive. It spends 0.30×
+  multipliers protecting layers that never needed it. A corrected Policy B should beat everything
+  measured here.
 
 ## 8. Magnitude is worse than random — and we know why
 Median ΔPPL over 35 layer×matrix cells (screening subset, dense 13.559):
@@ -411,12 +441,12 @@ plan; and **Fiebiger, *Evaluation and Comparison Extensions*** (2026-07-16) — 
 | W1 | Representative-layer / individual-matrix screening (5 layers × 7 matrices) | ✅ done (extended to 10/20/40%) |
 | W2 | Complete-layer uniform Wanda pruning | ✅ done |
 | **W3** | **Budget-matched *layer-wide* Wanda pruning** (one layer, one budget, allocation varies *between matrices*) | ❌ **not run** |
-| **W4** | **Robust/sensitive region zoom-in** (clusters around a robust and a sensitive candidate) | ⚠️ **partial** — only the one-sided boundary cluster (32–35) |
+| W4 | Robust/sensitive region zoom-in (clusters around a robust and a sensitive candidate) | ✅ **done** — 14 layers × 3 sparsities → finding 7 |
 | W5 | Final whole-model Wanda: Policy A vs B, budget-matched | ✅ done |
 | S1 | Representative matrix reconstruction scan (mask-only vs reconstructed) | ✅ done |
 | S2 | Reconstruction-benefit classification (A naturally redundant / B compensatable / C essential) | ✅ **done** — see finding 4b; `scripts/classify_reconstruction.py` |
 | S3 | Complete-layer SparseGPT reconstruction | ✅ done |
-| **S4** | **SparseGPT cluster & depth analysis** (easiest + hardest matrix types across clusters) | ⚠️ **partial** — boundary only |
+| S4 | SparseGPT cluster & depth analysis (easiest + hardest matrix types across clusters) | ⏳ running — task 2b (mask-only + `k_proj`/`up_proj`, chosen by reconstructability) |
 | S5 | Final whole-model SparseGPT + **combined Wanda→SparseGPT variant** | ✅ done |
 
 **The gap is the cluster/zoom-in stage (W3, W4, S2, S4).** It is also Stage 3 of the Fiebiger
@@ -491,7 +521,8 @@ done. **≈ 11 h total, sequential on one GPU.**
 | # | task | plan ref | what it settles | est. |
 |---|---|---|---|---|
 | ~~1~~ | ~~Whole-layer controls~~ — **DONE** (90 runs, 6/6 exit 0) → finding **4c** | Fiebiger Stage 2 · E1/E2 | the floor immediately overturned an unexamined assumption | ✅ |
-| **2** | **Cluster / depth zoom-in** — most-robust + most-sensitive matrix type across a robust cluster (15–21) and a sensitive cluster (29–35), 10/20/40%, wanda + sparsegpt_recon | **Rathore W4 + S4** · Fiebiger Stage 3 | is robustness a property of the layer region, the projection type, or their interaction? Directly tests the nearest-neighbour label assumption Policy B relies on | ~3 h |
+| ~~2~~ | ~~Cluster / depth zoom-in (W4)~~ — **DONE** (84 runs) → finding **7**: the interaction dominates | Rathore W4 · Stage 3 | answered: neither depth nor matrix type — their interaction | ✅ |
+| **2b** | **S4 proper** — mask-only + reconstructed on `k_proj`/`up_proj` (chosen by *reconstructability*, S4's criterion, not W4's sensitivity criterion) | **Rathore S4** | does *reconstructability* follow a depth pattern? Enables his mask/recon/improvement plot, which task 2 could not produce | ⏳ ~1.4 h |
 | **3** | **Layer-wide budget matching** — per-matrix normalised Wanda ranking pooled across one layer, prune the globally-lowest N; compare against uniform at the same tile count | **Rathore W3** | does non-uniform allocation help *within* a layer? The missing bridge between the per-matrix map and the whole-model policy. Needs ~30 lines (pooled normalised ranking; our `policy.py` only allocates by class at model scale) | ~1 h + code |
 | **4** | **Whole-model controls** — random (5 seeds) + magnitude, 8-point grid | Fiebiger Stage 4 · E1/E2 | **the floor for findings 1 and 4.** Also answers whether data-aware selection beats random *at all* at whole-model scale — untested, and finding #4 hinges on it. Subsumes the `random_recon` idea | ~5 h |
 
