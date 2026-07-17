@@ -35,6 +35,13 @@ METHODS = ["wanda", "sparsegpt", "sparsegpt_recon"]
 # Full ladder incl. the baseline controls (used for the method-comparison line plot).
 LADDER = ["random", "magnitude", "wanda", "sparsegpt", "sparsegpt_recon"]
 RATIOS = ["0.10", "0.20", "0.40"]
+
+# Every method must be compared on IDENTICAL cells. Layers 32/33/34 were later measured for
+# sparsegpt_recon only (to fix the policy's sensitivity labels), so including them here would
+# silently compute that method's median over 8 layers and the baselines' over 5 -- and the extra
+# cells are mostly robust, which would flatter it. Aggregate figures use the canonical set.
+# The 32-34 data lives in FINDINGS.md; completing that grid for all methods is a backlog item.
+CANON_LAYERS = [0, 9, 18, 27, 35]
 MATRICES = ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
 
 # Colorblind-safe categorical palette (Okabe-Ito), assigned in fixed order.
@@ -58,6 +65,8 @@ def load():
         for ratio in RATIOS:
             for f in glob.glob(os.path.join(SCREEN_DIR, f"{method}_p{ratio}", "layer*.json")):
                 s = json.load(open(f))
+                if s["layer"] not in CANON_LAYERS:
+                    continue          # keep every method on identical cells (see CANON_LAYERS)
                 layers.add(s["layer"])
                 for r in s["results"]:
                     div = r.get("divergence") or {}

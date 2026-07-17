@@ -1,59 +1,186 @@
-# Tile-Level Redundancy — Findings
+# Tile-Level Redundancy in LLMs — Findings
 
-Living log of results. Last updated: **2026-07-16**.
-All numbers are from the runs in `experiments/`; plots in `experiments/*/plots/`.
+Living log. Last updated: **2026-07-17** (after the overnight downstream + ablation marathon).
+Numbers come from the runs in `experiments/`; plots in `experiments/*/plots/`.
+
+## The answer, in one line
+
+> **At 32×32 tiles, ~5% of Qwen3-4B is genuinely redundant** — removable while keeping 90% of
+> the model's learned ability. Not the 40–70% our perplexity curves implied.
 
 ## Setup
 
 | | |
 |---|---|
 | Model | `Qwen/Qwen3-4B` (36 layers, bf16), RTX 4080 Super 16 GB |
-| Tile size | 32 × 32 |
-| Representative layers | 0, 9, 18, 27, 35 |
-| Matrices | `q/k/v/o_proj`, `gate/up/down_proj` (7 per layer) |
-| Methods | random (5 seeds), magnitude, wanda, sparsegpt (mask), sparsegpt_recon |
-| Eval | WikiText-2 perplexity + output divergence (KL / top-1 / hidden cosine) |
-| Dense baseline | **13.22** (full eval) · **13.559** (20% screening subset) |
-| Calibration | WikiText-2 *train* (disjoint from eval), seed 0 |
+| Tile size | 32 × 32 (never varied — see "next marathon") |
+| Screened layers | 0, 9, 18, 27, **32, 33, 34**, 35 |
+| Matrices | `q/k/v/o_proj`, `gate/up/down_proj` (7 per layer, 98,560 tiles each, 3,548,160 total) |
+| Selection methods | random, magnitude, wanda, sparsegpt (eq-22/23) |
+| Repair | SparseGPT reconstruction (eq-23), exact per output-row-block |
+| Eval | WikiText-2 perplexity · output divergence (KL) · **lm-eval accuracy (HellaSwag/PIQA/ARC-Easy)** |
+| Dense reference | ppl **13.22** · acc **0.6836 / 0.7492 / 0.7828** (reproduces published Qwen3-4B) |
 
-**All five methods are tile pruning** (32×32 blocks). Where results are contrasted with "weight-level," that refers to the *literature's* unstructured setting, not our runs.
-
-> ⚠️ **Read findings 7 and 8 before quoting any perplexity number below.** Downstream accuracy
-> shows the model has lost ~60% of its capability at 20% sparsity, where perplexity suggested
-> merely "degraded". All **relative** findings (method ranking, policy comparisons) hold; the
-> **absolute** perplexity readings are far more flattering than the truth.
+**All methods are tile pruning.** Contrasts with "weight-level" refer to the *literature's*
+unstructured setting, not our runs.
 
 ---
 
-## Key findings
+# Headline findings
 
-### 1. Reconstruction is essential at whole-model scale (relative headline — see finding 7)
-Uniform whole-model pruning (dense 13.22):
+## 1. Tile redundancy is ~5% — measured on real tasks ⭐
+`sparsegpt_recon`, uniform. **Retained = (acc − chance) / (acc_dense − chance)** — the share of
+*above-chance* ability kept. A broken model still scores chance by guessing, so raw accuracy
+flatters it.
 
-| sparsity | Wanda | SparseGPT (mask) | **SparseGPT (recon)** |
+| sparsity | HellaSwag | PIQA | ARC-Easy | perplexity |
+|---|---|---|---|---|
+| 1% | 100% | 103% | 98% | — |
+| 2% | 97% | 98% | 93% | — |
+| **5%** | **90%** | **90%** | **90%** | 15.62 |
+| 10% | 73% | 81% | 82% | 18.78 |
+| 20% | 37% | 51% | 41% | 30.95 |
+| 30% | 17% | 29% | 24% | 61.56 |
+
+**5% is the sweet spot** (90% retained, strikingly consistent across all three tasks); 10% is the
+aggressive edge (~79%); past that it collapses. This is the project's core answer — modest, but
+measured and defensible.
+
+## 2. Perplexity is a *nonlinear* proxy — and dangerous exactly where you'd rely on it ⭐
+Same configs as above:
+
+| perplexity | vs dense | ability retained |
+|---|---|---|
+| 15.62 | 1.18× | ~90% (proportionate) |
+| 18.78 | 1.42× | ~79% |
+| **30.95** | **2.34×** | **~43%** ← "only 2× worse" = more than half destroyed |
+| 61.56 | 4.66× | ~20% |
+
+Perplexity is monotonic with capability — it doesn't point the wrong way. The failure is that
+the mapping is **brutally nonlinear**: a 2.3× perplexity rise *reads* as mild degradation and
+*means* the model is mostly gone. It is a fine proxy in the usable regime (≤5%) and misleading
+precisely where you would use it to judge an aggressive method.
+
+## 3. Policy B games the metric it was built from ⭐⭐
+Two separate results, both damning for reading perplexity as capability.
+
+**(a) At high damage, a perplexity gain buys nothing.** Policy B vs A, same tile budget:
+
+| sparsity | ppl gain | HellaSwag | PIQA | ARC-Easy |
+|---|---|---|---|---|
+| 20% | 1.31× | **+6pp** | +1pp | **+7pp** | ← real capability |
+| **30%** | **1.58× (its peak)** | +3pp | **−1pp** | **0pp** | ← **nothing** |
+
+Policy B's headline number — its 1.58× peak — **buys no capability at all**. Both models are
+already near the guessing floor at 30%; improving a broken model's perplexity does not un-break
+it. The point where a perplexity-optimizing method looks *most* impressive is the point where its
+gain is most likely worthless. **We would have made that 1.58× the paper's headline.**
+
+**(b) At *matched perplexity*, Policy B delivers 10–16pp LESS capability than uniform.**
+Interpolating the recon+uniform curve to Policy B's exact perplexity:
+
+| config | uniform at same ppl | Policy B | gap |
 |---|---|---|---|
-| 5% | 28.31 | 28.03 | **15.62** |
-| 10% | 52.22 | 36.00 | **18.78** |
-| 20% | 156.51 | 74.65 | **30.95** |
-| 30% | 1,145 | 285 | **61.56** |
-| 40% | 7,812 | 3,070 | **76.30** |
-| 50% | 20,289,518 | 9,193 | **137.52** |
-| 60% | 17,595,522 | 15,125 | **246.18** |
-| 70% | 6,107,905 | 39,582,984 | **480.74** |
+| p20 sens (ppl 23.6) | 56.5 / 67.3 / 63.3 | 43 / 52 / 48 | **−13.5 / −15.3 / −15.3 pp** |
+| p30 sens (ppl 39.0) | 30.2 / 43.6 / 35.3 | 20 / 28 / 24 | **−10.2 / −15.6 / −11.3 pp** |
 
-Masking-only methods **collapse** (errors compound across 36 layers); reconstruction patches each layer and stays bounded — a **~10,000× gap** at 70%.
+**6/6 measurements, same direction, large.** At 20% Policy B improves perplexity 1.31×; an honest
+gain that size implies HellaSwag 37→56.5. It delivers 43. **Policy B buys ~31% of the capability
+its perplexity advertises.**
 
-**Reconstruction's value scales with pruning scope:** marginal per-matrix → moderate per-layer → **decisive whole-model**.
+**Why — and it is slightly circular:** our sensitivity map was *derived from perplexity*. We
+measured which matrices hurt perplexity, then built a policy protecting exactly those. Perplexity
+is dominated by the final layers (they feed the LM head); downstream tasks depend on the whole
+computation. So the policy protects what perplexity cares about and flatters the metric it was
+fit to. **Policy B's advantage is partly an artifact of how its map was built.**
 
-### 2. Redundancy is concentrated, not spread
-- **Middle layers (9/18/27) are genuinely redundant** — ΔPPL ≈ 0, sometimes slightly negative.
-- **The final-layer MLP is the bottleneck** — layer-35 `up_proj` @40%: 18.17 / 17.56 / 20.11 (wanda / mask / recon) vs ~13.7 at layer 27.
-- **Attention and MLP have different depth profiles** — attention (`q`/`v`) is most sensitive in the *middle*; MLP sensitivity is at the *end*.
-- **Mechanism:** the final layer feeds the LM head with no downstream layer to absorb its error.
-- **Verified real** (adversarial check): MLP-selective (attention at L35 is unremarkable — a bug would inflate all matrices), identical `num_pruned` across layers, reproduces at the last layer of Qwen3-0.6B.
+Both things remain true: at a fixed sparsity budget B *is* genuinely better (43 vs 37). Its
+perplexity number simply overstates that by ~3×.
 
-### 3. Magnitude is worse than random — in the tile setting
-Median ΔPPL over the 35 layer×matrix cells (screening subset, dense 13.559):
+→ **Next marathon:** build the sensitivity map from *downstream accuracy* instead of perplexity
+and re-run A/B. If the gap closes, this is confirmed as a metric artifact.
+
+## 4. Repair is everything; *which tiles you pick* barely matters ⭐
+Controlled ablation — the repair path is **bit-identical** between `wanda_recon` and
+`sparsegpt_recon` (CPU-verified), so selection is the only variable:
+
+| sparsity | wanda | **wanda_recon** | sparsegpt_recon | repair adds | eq-23 selection adds |
+|---|---|---|---|---|---|
+| 5% | 28.31 | **15.59** | 15.62 | 1.82× | 1.00× |
+| 10% | 52.22 | 19.81 | **18.78** | 2.64× | 1.05× |
+| 20% | 156.51 | **25.95** | 30.95 | 6.03× | 0.84× |
+| 30% | 1,145 | **38.45** | 61.56 | 29.78× | 0.62× |
+| 40% | 7,812 | **74.42** | 76.30 | **104.97×** | 0.98× |
+
+- **Repair dominates, monotonically**: 1.82× → **104.97×** as damage grows.
+- **Selection is ~neutral**: 0.62–1.05×, no trend.
+- **`wanda_recon` wins 4/5 sparsities** and is *cheaper* (no per-tile Schur complements).
+
+**This corrects our own headline.** "SparseGPT reconstruction is best" was never about SparseGPT's
+*selection* — it was about repair. **Recommended method: `wanda_recon`** — not because Wanda picks
+better, but because selection barely matters and Wanda's is cheap.
+
+Capability confirms it at 20%: `wanda` retains 14/12/16%, `sparsegpt_recon` 37/51/41% — repair is
+worth ~3× in real ability, not just perplexity.
+
+## 5. "Robust" is measured in isolation and does not compose ⭐
+Per our labels, **~81% of the model is individually "robust"** (ΔPPL ≈ 0 when pruned alone). Prune
+all of it together at 20% and ~60% of the model's ability is gone.
+
+> **The redundancy map measures MARGINAL damage. We were reading it as JOINT damage.**
+
+A matrix being harmless alone says nothing about it being harmless when the other 204 are also
+pruned. This single confusion explains the whole-model collapse, the capability numbers, *and*
+why Policy B only buys 1.1–1.6× — you cannot fix a compounding problem by reallocating budget
+among regions that are all mislabelled the same way. It is the empirical, quantified form of the
+"sequential dependency" limitation Rathore flagged in §4.8.
+
+## 6. Reallocation has an optimum — and Policy B + depth are ONE mechanism ⭐
+Depth concentration, **identical 20% budget** (every layer holds the same tile count, so
+N × local = 36 × 0.20 = 7.2 layer-equivalents is exact arithmetic):
+
+| layers | local | perplexity | vs uniform-36 (30.95) |
+|---|---|---|---|
+| 32 | 22.5% | 24.94 | 1.24× |
+| **24** | **30%** | **24.17** | **1.28× ← peak** |
+| 16 | 45% | 30.42 | 1.02× |
+| 12 | 60% | 54.51 | 0.57× |
+| **8** | **90%** | **1,890** | **0.02× (61× worse)** |
+
+A clean inverted-U. **Two competing forces explain both this and Policy B:**
+
+- damage **compounds across layers** → concentrate
+- damage is **super-linear within a layer** past ~30–45% → spread
+
+The optimum balances them. Policy B reverses at high sparsity for exactly the same reason: it
+pushes "robust" regions to 67% local, straight into the super-linear regime. **Two findings that
+looked independent are one mechanism.**
+
+Note: N=32 (prune only the robust zone, sensitive tail untouched) gives 1.24× — "prune only the
+redundant part" works, but modestly. 24.17 is still ~1.8× dense: concentration optimizes *within*
+the broken regime, it does not unlock a new one.
+
+## 7. The bottleneck is layer 35 specifically — not "the final layers"
+`up_proj` ΔPPL @20% (newly measured 32/33/34):
+
+| layer | 32 | 33 | 34 | 35 |
+|---|---|---|---|---|
+| ΔPPL | 0.38 | 0.19 | 1.01 | **3.37** |
+
+**Layers 32–33 are robust; 34 ramps; 35 spikes.** Our policy stamped layer 35's labels onto 32–35
+by nearest-neighbour, so **two of three were mislabelled** — the truly sensitive region is ~2–4%
+of the model, not the 8% we assumed. Attention at these layers is unremarkable; the effect is
+MLP-selective, which is also why it isn't a bug (verified: identical `num_pruned`, reproduces at
+the last layer of Qwen3-0.6B).
+
+**Mechanism:** layer 35 feeds the LM head with no downstream layer left to absorb its error.
+
+**Consequence: Policy B is handicapped by its own labels** — it spends 0.30× multipliers
+protecting layers 32–33, which never needed it. A corrected Policy B should beat everything
+measured here. (Top of the next-marathon list.)
+
+## 8. Magnitude is worse than random — and we know why
+Median ΔPPL over 35 layer×matrix cells (screening subset, dense 13.559):
 
 | method | 10% | 20% | 40% |
 |---|---|---|---|
@@ -63,164 +190,70 @@ Median ΔPPL over the 35 layer×matrix cells (screening subset, dense 13.559):
 | sparsegpt | 0.026 | 0.063 | 0.115 |
 | **sparsegpt_recon** | **0.006** | **0.016** | **0.050** |
 
-- **Magnitude sits *above* the random floor** — i.e. worse than chance. Confirmed on both models: 0.6B random **144-52**, 4B random **63-42**.
-- **`o_proj` is the reproducible exception** — magnitude wins there in *both* models independently (4B **10-5**, 0.6B **21-7**). Weight-norm is a genuinely good signal for the attention output projection.
-- **Data-awareness validated:** recon is **5× better than random**, 7.7× better than magnitude @20%.
+Magnitude sits **above the random floor** — worse than chance. Replicated independently on two
+model sizes (0.6B random 144-52, 4B random 63-42). `o_proj` is the reproducible exception
+(magnitude wins in *both* models: 4B 10-5, 0.6B 21-7).
 
-**Why tiles break magnitude — aggregation loss:**
+**Why: aggregation loss.** How you turn a per-weight score into a tile score matters more than
+which score you start from — magnitude (weights → block norm) is worst, wanda (weights → tile
+mean) better, sparsegpt (measures the tile's actual output effect) is tile-native. This
+empirically confirms Rathore's §3.8 prediction ("aggregation may hide important weights").
 
-| method | how it becomes tile-level | loss |
-|---|---|---|
-| magnitude | per-weight magnitudes → block norm | worst — a low-norm block can hold critical weights |
-| wanda | per-weight scores → tile mean | some (activation info survives better) |
-| sparsegpt | **measures the whole tile's output effect directly** | **none — natively tile-level** |
-
-This empirically confirms the limitation Rathore predicted in his metric report (§3.8, *"aggregation may hide important weights"*).
-
-### 4. Sensitivity-aware pruning (Policy B) helps within a range — and only as a *complement* to repair
-Budget-matched (identical total tiles removed). Gain = ppl(A) / ppl(B); **>1 means B wins**.
-Plot: `experiments/wholemodel/plots/policy_a_vs_b.png`
-
-| sparsity | Wanda | SparseGPT (mask) | **SparseGPT (recon)** |
-|---|---|---|---|
-| 5% | 1.25× | 1.32× | 1.10× |
-| 10% | **1.44×** | **1.51×** | 1.19× |
-| 20% | 1.08× | 1.37× | 1.31× |
-| 30% | *destroyed* | 0.80× ❌ | **1.58×** (peak) |
-| 40% | *destroyed* | *destroyed* | 1.11× |
-| 50% | *destroyed* | *(running)* | 0.87× ❌ |
-| 60% | *destroyed* | *(running)* | 0.67× ❌ |
-| 70% | *destroyed* | *(running)* | 0.50× ❌ |
-
-**Answer to Rathore's final research question: yes — but conditionally.** Every method gains from B at low sparsity, then reverses. Measured crossovers: **SparseGPT ~26%**, **recon ~45%**. Wanda never shows a measurable crossover — it is already destroyed past 20%.
-
-**Replicated 3× independently.** All three methods turn on the policy once the target moves far from 20% — the sparsity at which the sensitivity labels were measured. This was a single-method observation before; it now holds across three independent methods, which makes the extrapolation explanation robust rather than anecdotal.
-
-**Cause:** the "robust" label was measured **at 20%**. At a 60% target the policy pushes those regions to **67%** — far outside where the label was ever valid. They are not robust at 67%, so concentrating damage there beats spreading it. → **A redundancy map built at a single sparsity mislabels when extrapolated.** (Empirically confirmed, not hypothetical — no cap was hit; robust @60% target = 0.672.)
-
-**The crossover moves with repair (new).** Masking methods are already gibberish by 20–30%; recon keeps its B advantage to ~45% and stays measurable all the way to 70%. **Repair widens the range where sensitivity-aware allocation pays** — the two techniques are complementary, not redundant.
-
-**Policy B does not rescue masking-only pruning.** Wanda's best result at *any* sparsity under *either* policy (B @5% = 22.67) is still worse than reconstruction's plain *uniform* @5% (15.62). Allocation cannot substitute for repair.
-
-**Excluded as noise:** Wanda's apparent "4.45× @50%" and "5.44× @60%" compare two *destroyed* models (4.5M vs 20M perplexity). Both are gibberish; the ratio is not a win and is omitted from the plot.
-
-**Implication:** re-derive the classification *at the target sparsity*, or damp the multipliers as the target rises.
-
-### 5. Damage is sub-additive within a layer, compounding across layers
-Whole-layer ΔPPL is only **0.69–0.81×** the sum of its 7 individual matrices (degradations overlap). But *across* layers it compounds — which is why uniform whole-model collapses.
-
-Whole-layer ΔPPL (mean over 5 layers, dense 13.559):
-
-| method | 10% | 20% | 40% |
-|---|---|---|---|
-| wanda | 0.738 | 1.169 | 1.760 |
-| sparsegpt | 0.705 | 1.166 | 1.801 |
-| **sparsegpt_recon** | **0.451** | **0.859** | **1.495** |
-
-### 6. Reconstruction backfires at the extreme
-Layer-35 `up_proj` @40%: recon **20.11** is *worse* than mask (17.56) and Wanda (18.17). Correction cannot save the final layer when pruned hard — despite recon having the best *median* everywhere.
-
-### 7. Perplexity badly understates the damage (downstream reality check) ⚠️
-Dense reference (lm-eval, full task sets) — these **reproduce the published Qwen3-4B numbers**
-(68.4 / 74.9 / 78.3), validating the harness independently of our pruning code:
-
-| task | dense | chance |
-|---|---|---|
-| HellaSwag (acc_norm) | 0.6836 ± 0.0046 | 0.25 |
-| PIQA (acc_norm) | 0.7492 ± 0.0101 | 0.50 |
-| ARC-Easy (acc_norm) | 0.7828 ± 0.0085 | 0.25 |
-
-**Our best method (`sparsegpt_recon`) at a modest 20% uniform sparsity:**
-
-| task | dense | pruned | **of learned ability retained** |
-|---|---|---|---|
-| HellaSwag | 0.6836 | 0.4124 | **37%** |
-| PIQA | 0.7492 | 0.6273 | **51%** |
-| ARC-Easy | 0.7828 | 0.4697 | **41%** |
-
-"Retained" = `(acc_pruned − chance) / (acc_dense − chance)` — the share of *above-chance*
-ability that survives. **~60% of what the model learned is gone at 20%.**
-
-Perplexity called this same model **30.95** vs dense 13.22 — a 2.3× rise that reads as
-"degraded but working". It is not working.
-
-**Consequence — the ranking survives, the absolute claims do not.** Reconstruction still beats
-masking by orders of magnitude (finding 1 is a *relative* result and is untouched). But
-"recon holds perplexity to 481 at 70%" is practically meaningless: the model was already
-mostly destroyed at 20%. **The usable range for 32×32 tile pruning is far narrower than the
-perplexity curves implied — likely <10%, not 40–70%.**
-
-**Actionable:** perplexity is a poor proxy for tile-pruning damage. Report accuracy, or at
-minimum calibrate the ppl→accuracy relation before trusting a perplexity curve.
-
-*Status: 1 of 5 configs (recon p20 uniform). Policy A/B @20/30% + wanda p20 in flight.*
-
-### 8. "Robust" is measured in isolation and does not compose — this explains the collapse
-Class distribution over the whole model, from our own screening labels:
-
-| class | matrices | tiles | share |
-|---|---|---|---|
-| sensitive | 12 | 291,840 | **8.2%** |
-| moderate | 35 | 385,280 | 10.9% |
-| **robust** | 205 | 2,871,040 | **80.9%** |
-
-Each of those 205 robust matrices measured **ΔPPL ≈ 0 when pruned alone**. Prune them all
-together at 20% and the model loses ~60% of its capability (finding 7).
-
-> **The redundancy map measures MARGINAL damage. We were reading it as JOINT damage.**
-
-A matrix being individually harmless says nothing about it being harmless when the other 204
-are also pruned. This single confusion explains three separate observations at once:
-- the whole-model collapse (per-layer ΔPPL≈0, whole-model catastrophic),
-- the downstream result (finding 7),
-- why Policy B's gains are only 1.1–1.6× — you cannot fix a compounding problem by
-  reallocating budget among regions that are *all* mislabeled the same way.
-
-**Corollary — "prune only the redundant part" cannot save us.** Since 81% is already robust,
-hitting 20% global while touching *only* robust regions needs 24.7% local — nearly identical
-to plain uniform 20%. The damage does not come from the sensitive 8%; it is the accumulation
-across the robust 81%.
-
-**Also corrects the map's shape:** this is *not* a "middle layers are redundant" story.
-Layers **0–4 and 23–31 are fully robust**; only **32–35** are sensitive. Early layers are as
-prunable as middle ones.
-
-This is the empirical, quantified form of the "sequential dependency" limitation Rathore
-flagged in §4.8.
-
-⚠️ **Caveat:** we only measured layers 0/9/18/27/35; every other layer inherits its nearest
-measured neighbour. The "sensitive" 8% is really *layer 35's labels stamped onto 32–35* —
-layers 32/33/34 were never measured. The layer-34 check matters more because of this.
+## 9. Damage is sub-additive within a layer, compounding across layers
+Whole-layer ΔPPL is only **0.69–0.81×** the sum of its 7 individual matrices — degradations
+overlap. Across layers it compounds, which is why uniform whole-model pruning collapses.
 
 ---
 
-## Caveats
-- **5 layers sampled** (0/9/18/27/35) — no fine depth profile; layer-34 check pending.
-- **Screening uses a 20% eval subset** (5.1× faster; validated ppl delta 0.34). Headline/whole-model use full eval.
-- **One model** (Qwen3-4B), **one tile size** (32) — tile-size/shape sweep is backlogged.
-- **No downstream accuracy yet** — perplexity + divergence only. This is the biggest open gap.
-- **One-shot calibration** — Gram matrices come from the dense model per layer, not re-derived after upstream pruning (Rathore §4.8 "sequential dependency").
-- Policy B: recon and wanda complete; **sparsegpt 50/60/70% still running**.
-- **Comparisons above perplexity ~1000 are not meaningful** — both models are gibberish there, so A/B ratios in that zone are excluded rather than reported.
-- Sensitivity labels come from `sparsegpt_recon` @20% only; applying them to other methods assumes sensitivity transfers across methods (untested).
-- All methods deterministic (bit-identical across runs); only random uses seeds.
+# Caveats
+- **One model** (Qwen3-4B), **one tile size** (32×32), **one calibration seed**.
+- Downstream measured for `sparsegpt_recon` (+ `wanda` @20%). **`wanda_recon` — our new
+  recommended method — has no capability data yet.**
+- Screening uses a 20% eval subset (5.1× faster); whole-model/downstream use full eval.
+- Layers 1–8, 10–17, 19–26, 28–31 still inherit labels from their nearest measured neighbour.
+- **One-shot calibration**: Gram matrices come from the dense model per layer, never re-derived
+  after upstream pruning (Rathore §4.8).
+- Comparisons above ppl ~1000 are meaningless (both models gibberish) and are excluded, not
+  reported — this caught a fake "694× win" for Policy B at 70%.
+- All methods deterministic (bit-identical reruns); only `random` uses seeds.
 
-## Status
-- ✅ Screening (315 exp), whole-layer (45), whole-model uniform (24), baselines (magnitude + random ×5 seeds)
-- ✅ Policy A vs B: recon 8/8, wanda 8/8 → `plots/policy_a_vs_b.png`
-- ⏳ Policy B sparsegpt 5/8 (50/60/70% running)
-- ⬜ Downstream lm-eval on final models · `wanda_recon` select-vs-repair ablation · calibration-seed robustness · layer-34 depth check · tile-size sweep
+# Next testing marathon — flagged experiments
+Ordered by expected value.
 
-## Ready but not yet run
-- `scripts/run_downstream.py` — downstream accuracy (HellaSwag/PIQA/ARC-Easy) on any pruned config. **Needs `uv sync` first: `lm_eval` is declared and locked but was never installed.**
-- `src/redundancy/combined.py` — `wanda_recon` (Wanda selection + SparseGPT repair). CPU-verified; fills the missing cell of the select-vs-repair 2×2, which our current ladder confounds. Needs wiring into `run_pruning.py`.
+1. **Capability-derived sensitivity map** ⭐ — rebuild the map from *downstream accuracy* rather
+   than perplexity, then re-run A/B. Finding #3(b) shows Policy B flatters the metric it was fit
+   to; this tests that directly and, if it works, produces a policy that optimizes the thing we
+   actually care about. **Highest value, and the most interesting.**
+2. **Corrected Policy B** — relabel using the now-measured layers 32/33/34 and re-run the A/B
+   sweep. It has been protecting robust layers (32–33) for free. Cheap, and should beat every
+   policy result we have. Combines naturally with (1).
+3. **Tile size 8 / 16 vs 32** ⭐ — the big one. Coarse structure is the prime suspect for why only
+   ~5% is redundant. Finding #1 turns this from a nice-to-have into a sharp hypothesis: if
+   redundancy is real but the 32×32 grid is too coarse to find it, 8×8 should recover
+   substantially more. Needs a re-screen at the new tile sizes.
+4. **`wanda_recon` downstream** — our recommended method, no capability data. Run the same
+   1/2/5/10/20% ladder to confirm the perplexity win is real ability. Note finding #3(b): a
+   perplexity win is not evidence of a capability win until measured.
+5. **Depth optimum at *usable* sparsity** — the inverted-U (peak N=24) was measured at a 20%
+   budget, i.e. inside the broken regime. Redo at 5%, where the model still works, and the
+   optimum may sit elsewhere.
+6. **Iterative / sequential calibration** — re-derive H after upstream layers are pruned. Directly
+   attacks finding #5 (marginal ≠ joint) and Rathore §4.8. The most scientifically interesting
+   of these.
+7. **Calibration-seed robustness** — never tested; cheap insurance against a seed artifact.
+8. **Second model** (Qwen3-0.6B) for the downstream story — the perplexity findings replicate
+   across sizes; the capability findings are single-model.
+9. **Fill the depth profile** — measure the remaining unmeasured layers, or at least confirm the
+   nearest-neighbour assumption holds somewhere in the middle.
 
-## Where things live
+# Where things live
 ```
 experiments/screen/              per-matrix screening + baselines (+ plots/)
 experiments/screen_wholelayer/   whole-layer (+ plots/)
-experiments/wholemodel/          whole-model Policy A + B (+ plots/)
+experiments/wholemodel/          whole-model: uniform, Policy B, wanda_recon (+ plots/)
+experiments/depth/               depth concentration (+ plots/)
+experiments/downstream/          lm-eval accuracy (+ plots/)
 docs/metrics.md                  every metric, and why
-scripts/plot_{screening,wholelayer,wholemodel}.py   offline plotting from JSON
-src/redundancy/{scoring,recovery,policy,hooks,eval}.py
+scripts/plot_{screening,wholelayer,wholemodel,policy,depth,downstream}.py
+src/redundancy/{scoring,recovery,combined,policy,hooks,eval}.py
 ```

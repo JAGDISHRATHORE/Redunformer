@@ -22,9 +22,12 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 DENSE = 13.22  # full-eval dense perplexity (whole-model sweep used eval_frac=1.0)
-METHODS = ["wanda", "sparsegpt", "sparsegpt_recon"]
-COLOR = {"wanda": "#0072B2", "sparsegpt": "#E69F00", "sparsegpt_recon": "#009E73"}
-LABEL = {"wanda": "Wanda", "sparsegpt": "SparseGPT (mask)", "sparsegpt_recon": "SparseGPT (reconstruct)"}
+METHODS = ["wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon"]
+COLOR = {"wanda": "#0072B2", "sparsegpt": "#E69F00", "sparsegpt_recon": "#009E73",
+         "wanda_recon": "#CC79A7"}
+LABEL = {"wanda": "Wanda", "sparsegpt": "SparseGPT (mask)",
+         "sparsegpt_recon": "SparseGPT (select + repair)",
+         "wanda_recon": "Wanda select + SparseGPT repair"}
 INK, MUTED = "#1a1a1a", "#6b6b6b"
 OUT = "experiments/wholemodel/plots"
 os.makedirs(OUT, exist_ok=True)
@@ -62,12 +65,13 @@ def main():
             ax.spines[s].set_visible(False)
         ax.legend(frameon=False, fontsize=9.5)
 
-    fig.suptitle("Whole-model uniform pruning — reconstruction is essential",
-                 fontsize=15, fontweight="bold", color=INK, y=1.0)
-    fig.text(0.5, 0.955,
-             "every matrix in all 36 layers pruned at one sparsity, evaluated once (full WikiText-2)",
+    fig.suptitle("Whole-model uniform pruning — the repair is what matters, not the selection",
+                 fontsize=15, fontweight="bold", color=INK, y=1.04)
+    fig.text(0.5, 0.975,
+             "every matrix in all 36 layers pruned at one sparsity, evaluated once (full WikiText-2) · "
+             "note the two repaired methods sit on top of each other",
              ha="center", fontsize=10, color=MUTED)
-    plt.tight_layout(rect=[0, 0, 1, 0.94])
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
     plt.savefig(os.path.join(OUT, "wholemodel_headline.png"), dpi=150, bbox_inches="tight")
     plt.close()
     print("saved wholemodel_headline.png")
