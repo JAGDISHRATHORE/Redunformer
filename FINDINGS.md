@@ -144,6 +144,43 @@ better, but because selection barely matters and Wanda's is cheap.
 Capability confirms it at 20%: `wanda` retains 14/12/16%, `sparsegpt_recon` 37/51/41% — repair is
 worth ~3× in real ability, not just perplexity.
 
+## 4b. Repair backfires exactly where it is needed most (Rathore's S2) ⭐
+His **reconstruction-benefit classification**, run on data we already had. Thresholds are set by
+the random control's spread across seeds (median per-cell σ = 0.0619 ppl → "meaningful damage"
+bar = 2σ = **0.124**), not hand-picked — which is what extension E2 was specified for.
+Plot: `experiments/screen/plots/reconstruction_classes.png`
+
+| class | meaning | cells | share |
+|---|---|---|---|
+| **A** | naturally redundant — barely hurts even unrepaired | 21 | 60.0% |
+| **B** | compensatable — hurts, but repair fixes ≥60% of it | 9 | 25.7% |
+| **C** | essential — hurts, and repair cannot fix it | 5 | 14.3% |
+
+**Category C is layer 35's MLP, and there repair makes things *worse*:**
+
+| cell | mask-only | after repair | damage repaired |
+|---|---|---|---|
+| L35 `up_proj` | +2.71 | **+3.37** | **−24.5%** |
+| L35 `gate_proj` | +1.57 | +1.52 | +3.1% |
+| L35 `down_proj` | +0.34 | **+0.43** | **−26.4%** |
+
+Meanwhile in the middle it is spectacular: L18 `up_proj` repairs **124%** (ends *below* dense),
+L35 `v_proj` 85%, L9 `down_proj` 91%.
+
+**This gives the layer-35 bottleneck (finding 7) a mechanism instead of a description.**
+SparseGPT's repair minimises *that layer's* output error against calibration activations. In the
+middle that objective is well-aligned with what the model needs, and any residual is absorbed
+downstream. At layer 35 the output feeds the LM head directly, so the local L2 proxy stops being
+a proxy for next-token loss — and optimising it walks *away* from the true objective.
+
+> **Repair is everything (finding 4) — except where no downstream layer remains to absorb it.**
+
+It also shows finding #5 in Rathore's own taxonomy: 60% of cells are "naturally redundant"
+*individually*, yet pruning them together at 20% costs ~60% of the model's ability.
+
+**Practical:** exclude the final layer's MLP from reconstruction — mask it instead, or leave it
+dense. Repairing it is strictly worse than not repairing it.
+
 ## 5. "Robust" is measured in isolation and does not compose ⭐
 Per our labels, **~81% of the model is individually "robust"** (ΔPPL ≈ 0 when pruned alone). Prune
 all of it together at 20% and ~60% of the model's ability is gone.
@@ -241,7 +278,7 @@ plan; and **Fiebiger, *Evaluation and Comparison Extensions*** (2026-07-16) — 
 | **W4** | **Robust/sensitive region zoom-in** (clusters around a robust and a sensitive candidate) | ⚠️ **partial** — only the one-sided boundary cluster (32–35) |
 | W5 | Final whole-model Wanda: Policy A vs B, budget-matched | ✅ done |
 | S1 | Representative matrix reconstruction scan (mask-only vs reconstructed) | ✅ done |
-| **S2** | **Reconstruction-benefit classification** (A naturally redundant / B compensatable / C essential) | ❌ **not produced — the data already exists** |
+| S2 | Reconstruction-benefit classification (A naturally redundant / B compensatable / C essential) | ✅ **done** — see finding 4b; `scripts/classify_reconstruction.py` |
 | S3 | Complete-layer SparseGPT reconstruction | ✅ done |
 | **S4** | **SparseGPT cluster & depth analysis** (easiest + hardest matrix types across clusters) | ⚠️ **partial** — boundary only |
 | S5 | Final whole-model SparseGPT + **combined Wanda→SparseGPT variant** | ✅ done |
@@ -290,14 +327,6 @@ non-reproducible in the sense his template intends.
 # Next testing marathon — flagged experiments
 
 ## First: finish the adopted plan (these are not new ideas — they were always scoped)
-
-**S2 — Reconstruction-benefit classification. Costs nothing.** ⭐ Rathore's Categories A
-(naturally redundant: little damage even before repair) / B (compensatable: repair fixes it) /
-C (essential: repair does not). We already have mask-only *and* reconstructed perplexity for all
-35 layer×matrix combinations — this is pure analysis of saved JSON, **no GPU**. He argues it is
-more informative than final perplexity because it separates tiles that never mattered from tiles
-whose function was redistributed. Given finding #4 (repair is everything), this classification is
-now *more* interesting than when he wrote it: it says **where** repair does its work.
 
 **W4 / S4 — Cluster & depth zoom-in.** Only the boundary cluster (32–35) was measured. His design
 is cheap by construction: pick the most robust and most sensitive *matrix types* from screening
