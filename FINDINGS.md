@@ -57,7 +57,7 @@ right, and the planned gaps are now scheduled first.
 | 2 | Perplexity is a nonlinear proxy | ✅ planned — E4b (downstream accuracy) |
 | 3 | Policy B games its own metric | ✅ planned — W5/S5 (Policy A vs B) + E4b |
 | 4 | Repair ≫ selection | ✅ planned — S5's **combined Wanda→SparseGPT variant** |
-| 4b | Repair backfires at layer 35 | ✅ planned — **S2** (reconstruction-benefit classification) |
+| 4b | Repair backfires at the final layers' **MLP** (not the layer) | ✅ planned — **S2** + **S4** |
 | 4c | Data-aware selection only helps at layer 0 | ✅ planned — **E1/E2 controls at Stage 2** |
 | 5 | "Robust" does not compose | ✅ planned — synthesis of W1/W2 vs Stage 4 |
 | 6 | Reallocation has an optimum | ⚠️ **mixed** — Policy B planned; depth concentration unplanned |
@@ -193,13 +193,42 @@ Plot: `experiments/screen/plots/reconstruction_classes.png`
 Meanwhile in the middle it is spectacular: L18 `up_proj` repairs **124%** (ends *below* dense),
 L35 `v_proj` 85%, L9 `down_proj` 91%.
 
-**This gives the layer-35 bottleneck (finding 7) a mechanism instead of a description.**
-SparseGPT's repair minimises *that layer's* output error against calibration activations. In the
-middle that objective is well-aligned with what the model needs, and any residual is absorbed
-downstream. At layer 35 the output feeds the LM head directly, so the local L2 proxy stops being
-a proxy for next-token loss — and optimising it walks *away* from the true objective.
+**It is the final layer's MLP — not the final layer.** Rathore's **S4** cluster scan (task 2b)
+tested this directly, and *refuted the depth explanation we first reached for*. Repair fraction
+across the sensitive cluster (29–35), by matrix type:
 
-> **Repair is everything (finding 4) — except where no downstream layer remains to absorb it.**
+| matrix | @10% | @20% | @40% | layer 35 @40% |
+|---|---|---|---|---|
+| **`k_proj`** (attention) | +70.9% | +65.9% | +49.6% | **0.88 → 0.32 = +63.8%** |
+| **`up_proj`** (MLP) | +14.1% | **−18.1%** | **−40.7%** | **3.88 → 6.82 = −75.5%** |
+
+**`k_proj` repairs at +64% at the very same layer 35 where `up_proj` fails at −75%.** Cross-checked
+against S2, the split is by component, not depth:
+
+- attention at L35: `k_proj` **+72%**, `v_proj` **+85%** — repair works
+- MLP at L35: `gate_proj` +3%, `up_proj` **−25%**, `down_proj` **−26%** — repair backfires
+
+> **Repair is everything (finding 4) — except in the final layers' MLP, where it actively hurts.**
+
+⚠️ **What we first claimed, and why it was wrong.** The initial reading was "at layer 35 the output
+feeds the LM head directly, so no downstream layer absorbs the error, so the local least-squares
+objective stops proxying next-token loss." That is a *depth* argument, and `k_proj` at layer 35
+disproves it — same layer, same absence of downstream layers, repair works fine.
+
+**Mechanism: open.** Two candidates, neither separable with current data:
+1. `up_proj` and `gate_proj` feed the **SwiGLU multiplicative gate**, so a *linear* least-squares
+   objective may be misaligned with the gated output. But `down_proj` sits *after* the
+   nonlinearity and also fails (−26%), which cuts against this.
+2. The final-layer MLP Hessian is **ill-conditioned**, making the damped inverse produce a bad
+   update.
+
+A third observation any explanation must cover: **the failure deepens with sparsity**
+(−38% → −59% → −75% at layer 35), which a simple "no absorption downstream" story does not
+predict. Recording this as open rather than substituting another tidy narrative — the last one
+survived exactly one experiment.
+
+**Practical (unchanged, and now better targeted):** exclude the final layers' **MLP** from
+reconstruction — mask it instead. Attention there should still be repaired.
 
 It also shows finding #5 in Rathore's own taxonomy: 60% of cells are "naturally redundant"
 *individually*, yet pruning them together at 20% costs ~60% of the model's ability.
@@ -446,7 +475,7 @@ plan; and **Fiebiger, *Evaluation and Comparison Extensions*** (2026-07-16) — 
 | S1 | Representative matrix reconstruction scan (mask-only vs reconstructed) | ✅ done |
 | S2 | Reconstruction-benefit classification (A naturally redundant / B compensatable / C essential) | ✅ **done** — see finding 4b; `scripts/classify_reconstruction.py` |
 | S3 | Complete-layer SparseGPT reconstruction | ✅ done |
-| S4 | SparseGPT cluster & depth analysis (easiest + hardest matrix types across clusters) | ⏳ running — task 2b (mask-only + `k_proj`/`up_proj`, chosen by reconstructability) |
+| S4 | SparseGPT cluster & depth analysis (easiest + hardest matrix types across clusters) | ✅ **done** — 84 runs → refutes 4b's mechanism; see finding 4b |
 | S5 | Final whole-model SparseGPT + **combined Wanda→SparseGPT variant** | ✅ done |
 
 **The gap is the cluster/zoom-in stage (W3, W4, S2, S4).** It is also Stage 3 of the Fiebiger
@@ -522,7 +551,7 @@ done. **≈ 11 h total, sequential on one GPU.**
 |---|---|---|---|---|
 | ~~1~~ | ~~Whole-layer controls~~ — **DONE** (90 runs, 6/6 exit 0) → finding **4c** | Fiebiger Stage 2 · E1/E2 | the floor immediately overturned an unexamined assumption | ✅ |
 | ~~2~~ | ~~Cluster / depth zoom-in (W4)~~ — **DONE** (84 runs) → finding **7**: the interaction dominates | Rathore W4 · Stage 3 | answered: neither depth nor matrix type — their interaction | ✅ |
-| **2b** | **S4 proper** — mask-only + reconstructed on `k_proj`/`up_proj` (chosen by *reconstructability*, S4's criterion, not W4's sensitivity criterion) | **Rathore S4** | does *reconstructability* follow a depth pattern? Enables his mask/recon/improvement plot, which task 2 could not produce | ⏳ ~1.4 h |
+| ~~2b~~ | ~~S4 proper~~ — **DONE** (84 runs, 6/6 exit 0) → **refuted 4b's depth mechanism** | Rathore S4 | answered: reconstructability is component-specific, not depth-specific | ✅ |
 | **3** | **Layer-wide budget matching** — per-matrix normalised Wanda ranking pooled across one layer, prune the globally-lowest N; compare against uniform at the same tile count | **Rathore W3** | does non-uniform allocation help *within* a layer? The missing bridge between the per-matrix map and the whole-model policy. Needs ~30 lines (pooled normalised ranking; our `policy.py` only allocates by class at model scale) | ~1 h + code |
 | **4** | **Whole-model controls** — random (5 seeds) + magnitude, 8-point grid | Fiebiger Stage 4 · E1/E2 | **the floor for findings 1 and 4.** Also answers whether data-aware selection beats random *at all* at whole-model scale — untested, and finding #4 hinges on it. Subsumes the `random_recon` idea | ~5 h |
 
