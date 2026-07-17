@@ -42,6 +42,31 @@ unstructured setting, not our runs.
 
 ---
 
+# Findings — and where each came from
+
+**Sequencing note, stated plainly.** The adopted plan should have been completed *before* any
+follow-up experiments. It wasn't: the overnight work jumped to questions the early results
+suggested, while four of Rathore's strategies and three stages of the extensions plan were still
+open. The findings are tagged below so the planned results can be read on their own. Awkwardly,
+the unplanned work produced the project's headline answer (~5%) — that does not make the ordering
+right, and the planned gaps are now scheduled first.
+
+| # | finding | provenance |
+|---|---|---|
+| 1 | Tile redundancy is ~5% | ⚠️ **unplanned** — extends E4b/Stage 5 to a 1/2/5/10% ladder |
+| 2 | Perplexity is a nonlinear proxy | ✅ planned — E4b (downstream accuracy) |
+| 3 | Policy B games its own metric | ✅ planned — W5/S5 (Policy A vs B) + E4b |
+| 4 | Repair ≫ selection | ✅ planned — S5's **combined Wanda→SparseGPT variant** |
+| 4b | Repair backfires at layer 35 | ✅ planned — **S2** (reconstruction-benefit classification) |
+| 5 | "Robust" does not compose | ✅ planned — synthesis of W1/W2 vs Stage 4 |
+| 6 | Reallocation has an optimum | ⚠️ **mixed** — Policy B planned; depth concentration unplanned |
+| 7 | The bottleneck is layer 35 | ✅ planned — W1/S1 (layers 32–34 are an unplanned partial W4) |
+| 8 | Magnitude is worse than random | ✅ planned — E1/E2 (controls + seeds) |
+| 9 | Damage is sub-additive within a layer | ✅ planned — W2/S3 (whole-layer) |
+
+⚠️ **Findings 1 and 4 still lack their planned control floor** (E1: random + magnitude at
+whole-model scale). See the schedule below.
+
 # Headline findings
 
 ## 1. Tile redundancy is ~5% — measured on real tasks ⭐
@@ -347,31 +372,23 @@ non-reproducible in the sense his template intends.
   reported — this caught a fake "694× win" for Policy B at 70%.
 - All methods deterministic (bit-identical reruns); only `random` uses seeds.
 
-# Next testing marathon — flagged experiments
+# Schedule — finishing the adopted plan
+Run in **plan order** (screen → whole-layer → cluster → sweep), not value order. Everything below
+was already scoped; none of it is a new idea. Nothing from the "later" list starts until this is
+done. **≈ 11 h total, sequential on one GPU.**
 
-## First: finish the adopted plan (these are not new ideas — they were always scoped)
+| # | task | plan ref | what it settles | est. |
+|---|---|---|---|---|
+| **1** | **Whole-layer controls** — random (5 seeds) + magnitude, 5 layers, 10/20/40% | Fiebiger Stage 2 · E1/E2 | gives Stage 2 the floor it was specified with | ~2 h |
+| **2** | **Cluster / depth zoom-in** — most-robust + most-sensitive matrix type across a robust cluster (15–21) and a sensitive cluster (29–35), 10/20/40%, wanda + sparsegpt_recon | **Rathore W4 + S4** · Fiebiger Stage 3 | is robustness a property of the layer region, the projection type, or their interaction? Directly tests the nearest-neighbour label assumption Policy B relies on | ~3 h |
+| **3** | **Layer-wide budget matching** — per-matrix normalised Wanda ranking pooled across one layer, prune the globally-lowest N; compare against uniform at the same tile count | **Rathore W3** | does non-uniform allocation help *within* a layer? The missing bridge between the per-matrix map and the whole-model policy. Needs ~30 lines (pooled normalised ranking; our `policy.py` only allocates by class at model scale) | ~1 h + code |
+| **4** | **Whole-model controls** — random (5 seeds) + magnitude, 8-point grid | Fiebiger Stage 4 · E1/E2 | **the floor for findings 1 and 4.** Also answers whether data-aware selection beats random *at all* at whole-model scale — untested, and finding #4 hinges on it. Subsumes the `random_recon` idea | ~5 h |
 
-**W4 / S4 — Cluster & depth zoom-in.** Only the boundary cluster (32–35) was measured. His design
-is cheap by construction: pick the most robust and most sensitive *matrix types* from screening
-and run just those two across a robust cluster and a sensitive cluster — not all 7 matrices. It
-answers whether robustness belongs to the layer region, the projection type, or their interaction
-— which our current 5-layer map cannot distinguish, and which directly underpins the
-nearest-neighbour label assumption Policy B depends on.
+**Then, and only then:** the list below.
 
-**W3 — Budget-matched *layer-wide* pruning.** We budget-matched at whole-model scale (Policy B)
-but never at *layer* scale, which is what he specified: one layer, one budget, allocation free to
-vary between its 7 matrices. It is the natural bridge between the per-matrix map and the
-whole-model policy, and cheap.
+# Later — flagged for a future marathon
 
-## Then: what the results now suggest
-
-0. **`random_recon` — the test our own finding #4 demands.** ⭐ If selection really is irrelevant,
-   then *random* tile selection + SparseGPT repair should match `wanda_recon`. If it does,
-   "selection doesn't matter" stops being an inference across two methods and becomes proven —
-   you may pick tiles by coin flip provided you repair. If it doesn't, selection matters after
-   all and Wanda's heuristic is doing real work we are currently dismissing. **Either outcome is
-   publishable, and it is ~10 lines** (`combined.reconstruct_given_tiles` already takes an
-   arbitrary tile set). Cheapest decisive experiment available.
+Everything here is **unplanned** — it starts only once the schedule above is complete.
 
 1. **Capability-derived sensitivity map** ⭐ — rebuild the map from *downstream accuracy* rather
    than perplexity, then re-run A/B. Finding #3(b) shows Policy B flatters the metric it was fit
