@@ -24,6 +24,12 @@ from redundancy.combined import prune_wanda_recon, prune_random_recon
 from redundancy.policy import load_sensitivity, classify, expand_to_model, allocate
 
 
+# Methods whose result depends on a random seed. random_recon reproduces `random`'s tile
+# choice at the same seed, so it must be seeded and filed exactly like random -- gating on
+# the literal string "random" left it with seed=None (RNG falling back to system entropy,
+# so the tiles did NOT match) and no _seed suffix, so all five seeds overwrote one file.
+SEEDED_METHODS = ("random", "random_recon")
+
 MATRICES = {
     "gate_proj": "mlp",
     "up_proj": "mlp",
@@ -304,7 +310,7 @@ def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=Non
         "num_tiles": num_tiles,
         "num_pruned": num_pruned,
         "method": args.method,
-        "seed": seed if args.method == "random" else None,
+        "seed": seed if args.method in SEEDED_METHODS else None,
         "perplexity": ppl,
         "divergence": divergence,
         "pruned_mask": pruned_mask,
@@ -362,7 +368,7 @@ def run_layer_experiment(model, tokenizer, dataset, args, layer, seed=None,
     return {
         "layer": layer,
         "method": args.method,
-        "seed": seed if args.method == "random" else None,
+        "seed": seed if args.method in SEEDED_METHODS else None,
         "tile_size": args.tile_size,
         "prune_ratio": args.prune_ratio,
         "scope": "whole_layer",
@@ -440,7 +446,7 @@ def run_wholemodel_experiment(model, tokenizer, dataset, args, layers, seed=None
 
     return {
         "method": args.method,
-        "seed": seed if args.method == "random" else None,
+        "seed": seed if args.method in SEEDED_METHODS else None,
         "tile_size": args.tile_size,
         "prune_ratio": args.prune_ratio,
         "policy": getattr(args, "policy", "uniform"),
@@ -875,7 +881,7 @@ def main():
         if layers is None or len(layers) == 0:
             raise ValueError("Use --layers or --all-layers with --whole-layer")
 
-        seeds_to_run = args.seeds if args.method == "random" else [None]
+        seeds_to_run = args.seeds if args.method in SEEDED_METHODS else [None]
 
         for seed in seeds_to_run:
             for layer in layers:
@@ -891,8 +897,8 @@ def main():
                 )
 
                 ratio = ratio_short_name(args.prune_ratio)
-                if args.method == "random":
-                    filename = f"layer{layer}_wholelayer_random_p{ratio}_seed{seed}.json"
+                if args.method in SEEDED_METHODS:
+                    filename = f"layer{layer}_wholelayer_{args.method}_p{ratio}_seed{seed}.json"
                 else:
                     filename = f"layer{layer}_wholelayer_{args.method}_p{ratio}.json"
 
@@ -929,7 +935,7 @@ def main():
             for c, d in policy_info["per_class"].items():
                 print(f"  {c:10} ratio {d['ratio']:.3f}   matrices {d['matrices']:3}   tiles {d['tiles']:,}")
 
-        seed = args.seeds[0] if args.method == "random" else None
+        seed = args.seeds[0] if args.method in SEEDED_METHODS else None
         result = run_wholemodel_experiment(
             model, tokenizer, dataset, args, layers, seed=seed,
             calib_samples=calib_samples, probe_ids=probe_ids, reference=reference,
@@ -937,7 +943,7 @@ def main():
         )
 
         ratio = ratio_short_name(args.prune_ratio)
-        suffix = f"_seed{seed}" if args.method == "random" else ""
+        suffix = f"_seed{seed}" if args.method in SEEDED_METHODS else ""
         pol = "" if args.policy == "uniform" else f"_{args.policy}"
         summary = {
             "model": args.model,
@@ -956,7 +962,7 @@ def main():
         if layers is None or len(layers) == 0:
             raise ValueError("Use --layers or --all-layers with --all-matrices")
 
-        seeds_to_run = args.seeds if args.method == "random" else [None]
+        seeds_to_run = args.seeds if args.method in SEEDED_METHODS else [None]
 
         for seed in seeds_to_run:
             for layer in layers:
@@ -1005,8 +1011,8 @@ def main():
 
                 ratio = ratio_short_name(args.prune_ratio)
 
-                if args.method == "random":
-                    filename = f"layer{layer}_random_p{ratio}_seed{seed}.json"
+                if args.method in SEEDED_METHODS:
+                    filename = f"layer{layer}_{args.method}_p{ratio}_seed{seed}.json"
                 else:
                     filename = f"layer{layer}_{args.method}_p{ratio}.json"
 
@@ -1018,7 +1024,7 @@ def main():
                     "subset": args.subset,
                     "layer": layer,
                     "method": args.method,
-                    "seed": seed if args.method == "random" else None,
+                    "seed": seed if args.method in SEEDED_METHODS else None,
                     "tile_size": args.tile_size,
                     "prune_ratio": args.prune_ratio,
                     "calib_samples": args.calib_samples if needs_calibration else None,
@@ -1032,7 +1038,7 @@ def main():
         make_plots_from_json(args.experiment_dir, args.baseline_ppl)
 
     else:
-        seed = args.seeds[0] if args.method == "random" else None
+        seed = args.seeds[0] if args.method in SEEDED_METHODS else None
 
         stat = None
         if needs_calibration:
