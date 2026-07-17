@@ -59,7 +59,8 @@ right, and the planned gaps are now scheduled first.
 | 4 | Repair ≫ selection | ✅ planned — S5's **combined Wanda→SparseGPT variant** |
 | 4b | Repair backfires at the final layers' **MLP** (not the layer) | ✅ planned — **S2** + **S4** |
 | 4c | Data-aware selection only helps at layer 0 | ✅ planned — **E1/E2 controls at Stage 2** |
-| 4d | At 5% (the usable point) selection loses to a coin flip | ✅ planned — **E1/E2 controls at Stage 4** |
+| 4d | At 5% (usable point) selection loses to a coin flip | ✅ planned — **E1/E2 controls at Stage 4** |
+| 4e | Selection worthless *given repair* in the usable regime | ⚠️ **unplanned** — `random_recon` ablation |
 | 5 | "Robust" does not compose | ✅ planned — synthesis of W1/W2 vs Stage 4 |
 | 6 | Reallocation has an optimum | ⚠️ **mixed** — Policy B planned; depth concentration unplanned |
 | 6b | Layer-wide budget matching helps only where structure exists | ✅ planned — **W3** |
@@ -340,6 +341,41 @@ middle) — the same story at model scope.
 outlier-driven here (5%: mean 33.0 vs median 24.0, because s4 = 73.2). We report seed-win counts
 and the median instead. Twice during analysis a mean-based summary flipped the conclusion — the
 non-parametric statement needs no such choice.
+
+## 4e. Selection is worthless *given repair* — but only in the usable regime ⭐⭐
+`random_recon` (random selection + SparseGPT repair) prunes the **identical tiles** as `random` at
+each seed, so `random` vs `random_recon` isolates **repair** and `random_recon` vs `wanda_recon`
+isolates **selection**. 5 seeds per sparsity.
+
+| sparsity | REPAIR (paired, same tiles) | random_recon | wanda_recon | sparsegpt_recon |
+|---|---|---|---|---|
+| **5%** | **5/5**, median 1.57× | **14.86** | 15.59 (beats 0/5) | 15.62 (beats 0/5) |
+| **10%** | **5/5**, median 11.92× | **17.36** | 19.81 (beats 1/5) | 18.78 (beats 1/5) |
+| 20% | 5/5, median 3006× | 31.59 | **25.95 (beats 5/5)** | 30.95 (beats 3/5) |
+
+**Repair is unconditional: 15/15 paired improvements**, every seed, every sparsity. It behaves like
+an *attractor* — it lands at ~15 / ~17 whether random selection started it at 24 or at 2,279, which
+is why it erases the selection-induced variance (the ~5% floor spans 20.7–73.2; after repair,
+14.6–15.3).
+
+**Selection is scale-dependent, and my first framing was too strong:**
+- **At 5% — the only sparsity where the model is still usable (finding 1)** — data-aware selection
+  beats **0 of 10** coin-flip seeds. Repair is the entire method; selection is worse than nothing.
+- **At 10%** it still loses (2/10).
+- **At 20%** it *reverses*: `wanda_recon` beats all 5 random seeds. But this is the regime where the
+  model already retains only ~40% of its ability, so it is a real ordering outside the deployable
+  range.
+
+**Unified with 4d:** masking's selection crossover (loses to random ↔ beats random) sat between 5%
+and 10%; **repair pushes that crossover out to between 10% and 20%.** Repair widens the range where
+selection does not matter — the same way it widened the whole-model collapse point. So the honest
+one-liner is not "selection is worthless" but: **at any operating point you would actually deploy,
+repair is the whole method and the tile-selection metric buys nothing.**
+
+**Practical:** `random_recon` is the cheapest possible method (no scoring, no calibration for
+selection) *and* the best at 5%. ⚠️ It has no downstream-accuracy run yet — its perplexity edge over
+`sparsegpt_recon` is small, and per finding 2 that must be measured, not assumed, before it is
+recommended.
 
 ## 5. "Robust" is measured in isolation and does not compose ⭐
 Per our labels, **~81% of the model is individually "robust"** (ΔPPL ≈ 0 when pruned alone). Prune
