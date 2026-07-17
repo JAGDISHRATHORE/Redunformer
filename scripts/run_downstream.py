@@ -40,9 +40,9 @@ TASKS = ["hellaswag", "piqa", "arc_easy"]
 # wanda_recon needs the Gram matrix too: collect_stats_for_targets returns col-norms only for
 # the literal "wanda", and the full H for everything else -- which is what wanda_recon wants
 # (its Wanda scores come from sqrt(diag(H))).
-NEEDS_CALIB = ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon")
+NEEDS_CALIB = ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon", "random_recon")
 METHODS = ["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "sparsegpt_recon",
-           "wanda_recon"]
+           "wanda_recon", "random_recon"]
 
 
 def prune_whole_model(model, args, layers, calib_samples, ratio_map=None):
