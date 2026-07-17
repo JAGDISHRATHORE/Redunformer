@@ -11,10 +11,17 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../s
 
 from redundancy.models import load_model_and_tokenizer
 from redundancy.data import load_evaluation_dataset, load_calibration_dataset
-from redundancy.eval import evaluate_perplexity
+from redundancy.eval import (
+    evaluate_perplexity,
+    build_divergence_probe,
+    dense_reference_outputs,
+    output_divergence,
+)
 from redundancy.hooks import collect_gram_stats
 from redundancy.scoring import wanda_tile_scores, sparsegpt_tile_errors
 from redundancy.recovery import reconstruct_prune_tiles
+from redundancy.combined import prune_wanda_recon
+from redundancy.policy import load_sensitivity, classify, expand_to_model, allocate
 
 
 MATRICES = {
@@ -45,6 +52,27 @@ def zero_tiles(weight, tiles_to_prune, tile_size):
     with torch.no_grad():
         for r, c in tiles_to_prune:
             weight[r:r + tile_size, c:c + tile_size] = 0
+
+
+def extract_pruned_mask(weight, original_weight, tile_size, rel_tol=0.1):
+    """Return [[row, col], ...] tile coords that pruning removed (vectorised, non-invasive).
+
+    A tile counts as removed if its max-abs magnitude collapsed below rel_tol x its
+    original. This is exact for the maskers (the tile is hard zero) and robust for
+    reconstruction, where bf16/inversion rounding leaves a tiny residual instead of a
+    hard zero.
+    """
+    with torch.no_grad():
+        rows, cols = weight.shape
+        nr, nc = rows // tile_size, cols // tile_size
+        cut_r, cut_c = nr * tile_size, nc * tile_size
+        wt = weight[:cut_r, :cut_c].contiguous().float().reshape(nr, tile_size, nc, tile_size)
+        w0 = original_weight[:cut_r, :cut_c].contiguous().float().reshape(nr, tile_size, nc, tile_size)
+        cur = wt.abs().amax(dim=3).amax(dim=1)     # [nr, nc] current max-abs per tile
+        orig = w0.abs().amax(dim=3).amax(dim=1)     # [nr, nc] original max-abs per tile
+        removed = (orig > 0) & (cur <= rel_tol * orig)
+        idx = removed.nonzero(as_tuple=False)
+    return [[int(i) * tile_size, int(j) * tile_size] for i, j in idx.tolist()]
 
 
 def prune_lowest_magnitude(weight, tile_size, prune_ratio):
@@ -139,6 +167,10 @@ def apply_pruning(weight, method, tile_size, prune_ratio, seed, stat=None):
         return prune_sparsegpt(weight, tile_size, prune_ratio, stat)
     if method == "sparsegpt_recon":
         return prune_sparsegpt_recon(weight, tile_size, prune_ratio, stat)
+    if method == "wanda_recon":
+        # Wanda's selection + SparseGPT's repair: isolates selection from reconstruction.
+        # stat is the Gram matrix H; Wanda's column norms are sqrt(diag(H)).
+        return prune_wanda_recon(weight, tile_size, prune_ratio, stat)
 
     raise ValueError(f"Unknown pruning method: {method}")
 
@@ -212,7 +244,8 @@ def save_json(path, data):
     print(f"Results saved to {path}")
 
 
-def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=None, stat=None):
+def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=None, stat=None,
+                          probe_ids=None, reference=None):
     target_weight = get_target_weight(model, target_name)
     original_weight = target_weight.detach().clone()
 
@@ -237,9 +270,24 @@ def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=Non
     print(f"Total full tiles: {num_tiles}")
     print(f"Pruned tiles: {num_pruned}")
 
-    ppl = evaluate_perplexity(model, tokenizer, dataset)
+    ppl = evaluate_perplexity(model, tokenizer, dataset, eval_frac=args.eval_frac)
 
     print(f"Final Perplexity after pruning: {ppl:.4f}")
+
+    divergence = None
+    if probe_ids is not None and reference is not None:
+        divergence = output_divergence(model, probe_ids, reference)
+        print(
+            f"Divergence vs dense: KL={divergence['kl_dense_pruned']:.4f} "
+            f"top1={divergence['top1_agreement']:.3f} cos={divergence['hidden_cosine']:.4f}"
+        )
+
+    # Record the pruning mask (best-effort; must never break the experiment).
+    try:
+        pruned_mask = extract_pruned_mask(target_weight, original_weight, args.tile_size)
+    except Exception as exc:
+        print(f"[warn] mask extraction failed: {exc}")
+        pruned_mask = None
 
     with torch.no_grad():
         target_weight.copy_(original_weight)
@@ -253,6 +301,152 @@ def run_single_experiment(model, tokenizer, dataset, args, target_name, seed=Non
         "method": args.method,
         "seed": seed if args.method == "random" else None,
         "perplexity": ppl,
+        "divergence": divergence,
+        "pruned_mask": pruned_mask,
+    }
+
+
+def run_layer_experiment(model, tokenizer, dataset, args, layer, seed=None,
+                         layer_stats=None, probe_ids=None, reference=None):
+    """Prune ALL seven matrices of one layer simultaneously, evaluate once, restore.
+
+    Measures the cumulative effect of pruning a whole layer (Rathore Strategy 2),
+    as opposed to the per-matrix sensitivity of run_single_experiment.
+    """
+    targets = {m: build_target_name(layer, m) for m in MATRICES.keys()}
+    weights = {m: get_target_weight(model, t) for m, t in targets.items()}
+    originals = {m: w.detach().clone() for m, w in weights.items()}
+
+    print("\n=======================================")
+    print(f"Whole-layer pruning: layer {layer}  method {args.method}  ratio {args.prune_ratio}")
+    print("=======================================")
+
+    matrix_info = []
+    for matrix_name in MATRICES.keys():
+        stat = layer_stats[targets[matrix_name]] if layer_stats is not None else None
+        num_tiles, num_pruned = apply_pruning(
+            weights[matrix_name], args.method, args.tile_size, args.prune_ratio, seed, stat=stat,
+        )
+        try:
+            mask = extract_pruned_mask(weights[matrix_name], originals[matrix_name], args.tile_size)
+        except Exception as exc:
+            print(f"[warn] mask extraction failed ({matrix_name}): {exc}")
+            mask = None
+        matrix_info.append({
+            "matrix": matrix_name,
+            "num_tiles": num_tiles,
+            "num_pruned": num_pruned,
+            "pruned_mask": mask,
+        })
+
+    ppl = evaluate_perplexity(model, tokenizer, dataset, eval_frac=args.eval_frac)
+    print(f"Whole-layer perplexity: {ppl:.4f}")
+
+    divergence = None
+    if probe_ids is not None and reference is not None:
+        divergence = output_divergence(model, probe_ids, reference)
+        print(
+            f"Divergence vs dense: KL={divergence['kl_dense_pruned']:.4f} "
+            f"top1={divergence['top1_agreement']:.3f} cos={divergence['hidden_cosine']:.4f}"
+        )
+
+    with torch.no_grad():
+        for matrix_name in MATRICES.keys():
+            weights[matrix_name].copy_(originals[matrix_name])
+
+    return {
+        "layer": layer,
+        "method": args.method,
+        "seed": seed if args.method == "random" else None,
+        "tile_size": args.tile_size,
+        "prune_ratio": args.prune_ratio,
+        "scope": "whole_layer",
+        "perplexity": ppl,
+        "divergence": divergence,
+        "matrices": matrix_info,
+    }
+
+
+def build_tile_counts(model, layers, tile_size):
+    """{(layer, matrix): number of full tiles} -- needed to budget-match a policy."""
+    tiles = {}
+    for layer in layers:
+        for matrix_name in MATRICES.keys():
+            w = get_target_weight(model, build_target_name(layer, matrix_name))
+            rows, cols = w.shape
+            tiles[(layer, matrix_name)] = (rows // tile_size) * (cols // tile_size)
+    return tiles
+
+
+def run_wholemodel_experiment(model, tokenizer, dataset, args, layers, seed=None,
+                              calib_samples=None, probe_ids=None, reference=None,
+                              ratio_map=None):
+    """Prune every matrix across ALL layers at one uniform sparsity, evaluate once.
+
+    Layers are processed in order; for the data-aware methods each layer's calibration
+    is collected on the model AS IT CURRENTLY STANDS (earlier layers already pruned),
+    i.e. the faithful sequential one-shot approach. Each layer's stats are freed before
+    the next, so peak memory is one layer's Gram matrices. There is no restore -- the
+    returned model is the fully pruned model (run one sparsity per process).
+    """
+    needs_calib = args.method in ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon")
+    total_tiles = 0
+    total_pruned = 0
+    per_layer = []
+
+    for layer in layers:
+        layer_stats = None
+        if needs_calib:
+            target_names = [build_target_name(layer, m) for m in MATRICES.keys()]
+            layer_stats = collect_stats_for_targets(model, calib_samples, target_names, args.method)
+
+        layer_pruned = 0
+        for matrix_name in MATRICES.keys():
+            target_name = build_target_name(layer, matrix_name)
+            weight = get_target_weight(model, target_name)
+            stat = layer_stats[target_name] if layer_stats is not None else None
+            # Policy A (uniform) uses one ratio everywhere; Policy B supplies a per-matrix ratio.
+            ratio = ratio_map[(layer, matrix_name)] if ratio_map is not None else args.prune_ratio
+            num_tiles, num_pruned = apply_pruning(
+                weight, args.method, args.tile_size, ratio, seed, stat=stat,
+            )
+            total_tiles += num_tiles
+            total_pruned += num_pruned
+            layer_pruned += num_pruned
+
+        per_layer.append({"layer": layer, "num_pruned": layer_pruned})
+        print(f"  layer {layer:2}: pruned {layer_pruned} tiles (total {total_pruned})")
+
+        del layer_stats
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    print("Evaluating fully pruned whole model...")
+    ppl = evaluate_perplexity(model, tokenizer, dataset, eval_frac=args.eval_frac)
+    print(f"Whole-model perplexity: {ppl:.4f}")
+
+    divergence = None
+    if probe_ids is not None and reference is not None:
+        divergence = output_divergence(model, probe_ids, reference)
+        print(
+            f"Divergence vs dense: KL={divergence['kl_dense_pruned']:.4f} "
+            f"top1={divergence['top1_agreement']:.3f} cos={divergence['hidden_cosine']:.4f}"
+        )
+
+    return {
+        "method": args.method,
+        "seed": seed if args.method == "random" else None,
+        "tile_size": args.tile_size,
+        "prune_ratio": args.prune_ratio,
+        "policy": getattr(args, "policy", "uniform"),
+        "scope": "whole_model",
+        "num_layers": len(layers),
+        "total_tiles": total_tiles,
+        "total_pruned": total_pruned,
+        "achieved_sparsity": (total_pruned / total_tiles) if total_tiles else None,
+        "perplexity": ppl,
+        "divergence": divergence,
+        "per_layer": per_layer,
     }
 
 
@@ -497,7 +691,8 @@ def main():
     parser.add_argument(
         "--method",
         type=str,
-        choices=["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "sparsegpt_recon"],
+        choices=["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "sparsegpt_recon",
+                 "wanda_recon"],
         default="magnitude",
     )
 
@@ -513,6 +708,13 @@ def main():
         type=int,
         default=512,
         help="Token length of each calibration window.",
+    )
+
+    parser.add_argument(
+        "--eval-frac",
+        type=float,
+        default=1.0,
+        help="Fraction of the eval corpus for perplexity (e.g. 0.2 for fast screening; 1.0 = full).",
     )
 
     parser.add_argument(
@@ -551,6 +753,33 @@ def main():
     )
 
     parser.add_argument(
+        "--whole-layer",
+        action="store_true",
+        help="Prune all seven matrices of each layer simultaneously and evaluate once.",
+    )
+
+    parser.add_argument(
+        "--whole-model",
+        action="store_true",
+        help="Prune every matrix across all layers at one uniform sparsity, evaluate once.",
+    )
+
+    parser.add_argument(
+        "--policy",
+        type=str,
+        choices=["uniform", "sensitivity"],
+        default="uniform",
+        help="Whole-model budget policy: uniform (A), or sensitivity-aware budget-matched (B).",
+    )
+
+    parser.add_argument(
+        "--screen-dir",
+        type=str,
+        default="experiments/screen",
+        help="Screening results used to derive the sensitivity classes for --policy sensitivity.",
+    )
+
+    parser.add_argument(
         "--experiment-dir",
         type=str,
         default="experiments/full_scan",
@@ -586,7 +815,12 @@ def main():
     model, tokenizer = load_model_and_tokenizer(args.model)
     dataset = load_evaluation_dataset(args.dataset, args.subset, split="test")
 
-    needs_calibration = args.method in ("wanda", "sparsegpt", "sparsegpt_recon")
+    # Dense reference for output-divergence, computed once on the fully dense model.
+    print("Building divergence probe and dense reference...")
+    probe_ids = build_divergence_probe(tokenizer, dataset)
+    reference = dense_reference_outputs(model, probe_ids)
+
+    needs_calibration = args.method in ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon")
     calib_samples = None
     if needs_calibration:
         calib_samples = load_calibration_dataset(
@@ -603,6 +837,87 @@ def main():
         layers = args.layers
     else:
         layers = None
+
+    if args.whole_layer:
+        if layers is None or len(layers) == 0:
+            raise ValueError("Use --layers or --all-layers with --whole-layer")
+
+        seeds_to_run = args.seeds if args.method == "random" else [None]
+
+        for seed in seeds_to_run:
+            for layer in layers:
+                layer_stats = None
+                if needs_calibration:
+                    target_names = [build_target_name(layer, m) for m in MATRICES.keys()]
+                    print(f"Collecting {args.method} calibration stats for layer {layer}...")
+                    layer_stats = collect_stats_for_targets(model, calib_samples, target_names, args.method)
+
+                result = run_layer_experiment(
+                    model, tokenizer, dataset, args, layer, seed=seed,
+                    layer_stats=layer_stats, probe_ids=probe_ids, reference=reference,
+                )
+
+                ratio = ratio_short_name(args.prune_ratio)
+                if args.method == "random":
+                    filename = f"layer{layer}_wholelayer_random_p{ratio}_seed{seed}.json"
+                else:
+                    filename = f"layer{layer}_wholelayer_{args.method}_p{ratio}.json"
+
+                summary = {
+                    "model": args.model,
+                    "dataset": args.dataset,
+                    "subset": args.subset,
+                    "calib_samples": args.calib_samples if needs_calibration else None,
+                    "calib_seqlen": args.calib_seqlen if needs_calibration else None,
+                    "eval_frac": args.eval_frac,
+                    **result,
+                }
+                save_json(os.path.join(args.experiment_dir, filename), summary)
+
+        return
+
+    if args.whole_model:
+        if layers is None:
+            layers = list(range(get_num_layers(model)))
+        print(f"Whole-model pruning over {len(layers)} layers: {layers}")
+
+        # Policy B: derive per-matrix budgets from the screening map, budget-matched
+        # so the total tiles removed matches uniform at the same target sparsity.
+        ratio_map, policy_info = None, None
+        if args.policy == "sensitivity":
+            sens = load_sensitivity(args.screen_dir, method="sparsegpt_recon", ref_ratio="0.20")
+            classes = classify(sens)
+            measured = sorted({l for (l, _) in sens})
+            full = expand_to_model(classes, layers, list(MATRICES.keys()), measured)
+            tiles = build_tile_counts(model, layers, args.tile_size)
+            ratio_map, policy_info = allocate(full, tiles, args.prune_ratio)
+            print(f"Policy B (sensitivity-aware, budget-matched) — measured layers {measured}")
+            print(f"  target sparsity {policy_info['target']:.3f}  ->  achieved {policy_info['achieved']:.4f}")
+            for c, d in policy_info["per_class"].items():
+                print(f"  {c:10} ratio {d['ratio']:.3f}   matrices {d['matrices']:3}   tiles {d['tiles']:,}")
+
+        seed = args.seeds[0] if args.method == "random" else None
+        result = run_wholemodel_experiment(
+            model, tokenizer, dataset, args, layers, seed=seed,
+            calib_samples=calib_samples, probe_ids=probe_ids, reference=reference,
+            ratio_map=ratio_map,
+        )
+
+        ratio = ratio_short_name(args.prune_ratio)
+        suffix = f"_seed{seed}" if args.method == "random" else ""
+        pol = "" if args.policy == "uniform" else f"_{args.policy}"
+        summary = {
+            "model": args.model,
+            "dataset": args.dataset,
+            "subset": args.subset,
+            "calib_samples": args.calib_samples if needs_calibration else None,
+            "calib_seqlen": args.calib_seqlen if needs_calibration else None,
+            "eval_frac": args.eval_frac,
+            "policy_info": policy_info,
+            **result,
+        }
+        save_json(os.path.join(args.experiment_dir, f"wholemodel_{args.method}_p{ratio}{pol}{suffix}.json"), summary)
+        return
 
     if args.all_matrices:
         if layers is None or len(layers) == 0:
@@ -640,6 +955,8 @@ def main():
                         target_name=target_name,
                         seed=seed,
                         stat=stat,
+                        probe_ids=probe_ids,
+                        reference=reference,
                     )
 
                     result["layer"] = layer
@@ -664,6 +981,9 @@ def main():
                     "seed": seed if args.method == "random" else None,
                     "tile_size": args.tile_size,
                     "prune_ratio": args.prune_ratio,
+                    "calib_samples": args.calib_samples if needs_calibration else None,
+                    "calib_seqlen": args.calib_seqlen if needs_calibration else None,
+                    "eval_frac": args.eval_frac,
                     "results": layer_results,
                 }
 
@@ -690,6 +1010,8 @@ def main():
             target_name=args.target_name,
             seed=seed,
             stat=stat,
+            probe_ids=probe_ids,
+            reference=reference,
         )
 
         output_path = args.output
