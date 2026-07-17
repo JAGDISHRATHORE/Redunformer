@@ -59,6 +59,7 @@ right, and the planned gaps are now scheduled first.
 | 4 | Repair ≫ selection | ✅ planned — S5's **combined Wanda→SparseGPT variant** |
 | 4b | Repair backfires at the final layers' **MLP** (not the layer) | ✅ planned — **S2** + **S4** |
 | 4c | Data-aware selection only helps at layer 0 | ✅ planned — **E1/E2 controls at Stage 2** |
+| 4d | At 5% (the usable point) selection loses to a coin flip | ✅ planned — **E1/E2 controls at Stage 4** |
 | 5 | "Robust" does not compose | ✅ planned — synthesis of W1/W2 vs Stage 4 |
 | 6 | Reallocation has an optimum | ⚠️ **mixed** — Policy B planned; depth concentration unplanned |
 | 6b | Layer-wide budget matching helps only where structure exists | ✅ planned — **W3** |
@@ -66,8 +67,9 @@ right, and the planned gaps are now scheduled first.
 | 8 | Magnitude is worse than random | ✅ planned — E1/E2 (controls + seeds) |
 | 9 | Damage is sub-additive within a layer | ✅ planned — W2/S3 (whole-layer) |
 
-⚠️ **Findings 1 and 4 still lack their planned control floor** (E1: random + magnitude at
-whole-model scale). See the schedule below.
+✅ **Findings 1 and 4 now have their control floor** (E1/E2 at whole-model scale) — see finding
+4d. It did not confirm finding 4; it sharpened it: at 5%, selection is *worse than random*,
+and repair is the whole method.
 
 # Headline findings
 
@@ -291,6 +293,53 @@ method×sparsity cells, and the middle sits within noise in 23 of 36. A pattern,
 **None of this was visible before the control ran.** Without a floor, "wanda @10%, layer 18 =
 0.441" looks like a data-aware method working; it is chance. E1's rationale — *"has no meaning
 without a floor"* — was load-bearing, not a formality.
+
+## 4d. At the only usable operating point, selection loses to a coin flip ⭐⭐
+The **whole-model floor** (Fiebiger Stage 4 / E1+E2) — random ×5 seeds and magnitude, at model
+scale, the control findings 1 and 4 were missing. Reported **non-parametrically** (how many of the
+5 random seeds each method beats) because the random distribution is heavy-tailed: one seed
+detonates and drags the mean, so mean±σ is actively misleading here.
+
+Random floor, seed by seed (ppl, dense 13.22):
+
+| sparsity | s1 | s2 | s3 | s4 | s5 | median |
+|---|---|---|---|---|---|---|
+| 5% | 25.0 | 24.0 | 20.7 | **73.2** | 22.2 | **24.0** |
+| 10% | 344.6 | 335.8 | 83.9 | **2,278.8** | 92.3 | **335.8** |
+| 20% | 815k | 39.6k | 95.0k | 462k | 16.9k | **95.0k** |
+
+**How many of the 5 random seeds does each method beat?**
+
+| method | 5% | 10% | 20% |
+|---|---|---|---|
+| `magnitude` | **0/5** (4,942) | 0/5 | 0/5 |
+| `wanda` (selection only) | **1/5** (28.31) | 5/5 (52.2) | 5/5 (156.5) |
+| `sparsegpt` (selection only) | **1/5** (28.03) | 5/5 (36.0) | 5/5 (74.7) |
+| `sparsegpt_recon` (repair) | **5/5** (15.62) | 5/5 (18.8) | 5/5 (31.0) |
+| `wanda_recon` (repair) | **5/5** (15.59) | 5/5 (19.8) | 5/5 (26.0) |
+
+**Two regimes, and the crossover is between 5% and 10%:**
+
+- **At 5% — the only sparsity where the model still works (finding 1)** — data-aware selection is
+  **worse than a coin flip**: wanda loses to 4 of 5 random seeds. Repair still wins (5/5, 1.53× vs
+  the median floor). So at the usable operating point, **repair is the entire method and selection
+  is worse than nothing.**
+- **At 10%+**, random collapses (336 → 95,000) while the data-aware methods hold (52 → 157).
+  Selection becomes essential — 6.4× at 10%, 607× at 20%. But this is the regime where the model
+  is already broken.
+
+**E3 predicted this before the data existed:** *"methods are nearly indistinguishable at low
+sparsity and separate only as sparsity increases"*, and the informative region is *"where a
+data-aware method continues to hold while the random control has already collapsed."* Both land
+exactly.
+
+**Consistent with 4c** (whole-layer: selection loses to random at layer 35, ties through the
+middle) — the same story at model scope.
+
+⚠️ **Methodological note.** E2 specifies "mean together with a range", but the mean is
+outlier-driven here (5%: mean 33.0 vs median 24.0, because s4 = 73.2). We report seed-win counts
+and the median instead. Twice during analysis a mean-based summary flipped the conclusion — the
+non-parametric statement needs no such choice.
 
 ## 5. "Robust" is measured in isolation and does not compose ⭐
 Per our labels, **~81% of the model is individually "robust"** (ΔPPL ≈ 0 when pruned alone). Prune
