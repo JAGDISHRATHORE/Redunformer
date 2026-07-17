@@ -8,6 +8,23 @@ Numbers come from the runs in `experiments/`; plots in `experiments/*/plots/`.
 > **At 32×32 tiles, ~5% of Qwen3-4B is genuinely redundant** — removable while keeping 90% of
 > the model's learned ability. Not the 40–70% our perplexity curves implied.
 
+## For the presentation — the four things worth saying
+
+1. **We can now put a number on the project's question: ~5%** (measured on real tasks, not a proxy).
+2. **Perplexity nearly fooled us.** At 20% sparsity it reads "2× worse"; the model has lost ~60%
+   of its ability. Two of our conclusions changed once we measured accuracy.
+3. **Repair is what matters, not the metric you select with** — worth 1.8×–105×, while the
+   selection rule is worth ~nothing. **Rathore's combined variant (Wanda select + SparseGPT
+   repair) is our best method**, and cheaper than what we were using.
+4. **Rathore's Strategy 5 works, conditionally** — sensitivity-aware allocation wins at low
+   sparsity, but it flatters perplexity ~3× more than it improves actual capability, because its
+   map was built from perplexity.
+
+**Status of the plan:** every element of Rathore's strategy has now run — model, tile size,
+representative layers, dense-model discipline, both metric ladders (eq. 12/22/23), the combined
+variant, and Strategy 5 (Policy A vs B). The controls, seeds, downstream accuracy, output
+divergence and the widened sparsity sweep are extensions on top of it.
+
 ## Setup
 
 | | |
@@ -101,6 +118,11 @@ perplexity number simply overstates that by ~3×.
 and re-run A/B. If the gap closes, this is confirmed as a metric artifact.
 
 ## 4. Repair is everything; *which tiles you pick* barely matters ⭐
+**Credit: the combined variant is Rathore's.** His strategy document specified "select tiles with
+Wanda, reconstruct the survivors with SparseGPT" as part of the backbone from the start — it sat
+unrun on the backlog for weeks. What we add here is the *framing* (that it isolates selection
+from repair) and the measurement. **His method turns out to be the best one we have.**
+
 Controlled ablation — the repair path is **bit-identical** between `wanda_recon` and
 `sparsegpt_recon` (CPU-verified), so selection is the only variable:
 
@@ -207,8 +229,16 @@ overlap. Across layers it compounds, which is why uniform whole-model pruning co
 
 # Caveats
 - **One model** (Qwen3-4B), **one tile size** (32×32), **one calibration seed**.
-- Downstream measured for `sparsegpt_recon` (+ `wanda` @20%). **`wanda_recon` — our new
-  recommended method — has no capability data yet.**
+- ⚠️ Downstream measured for `sparsegpt_recon` (+ `wanda` @20%). **`wanda_recon` — the method we
+  recommend — has no capability data yet, so that recommendation currently rests on perplexity
+  alone, which is exactly the error finding #3 documents.** Runs are queued. Until they land,
+  present finding #4 as a perplexity result.
+- `wanda_recon`'s perplexity grid covers 5–40% where other methods cover 5–70% (50/60/70% queued).
+- Layers 32–34 measured for `sparsegpt_recon` only, so aggregate figures use the canonical 5
+  layers to keep every method on identical cells.
+- Whole-model runs have no `magnitude`/`random` floor — those controls exist only at screening
+  scale.
+- **Calibration seed is neither varied nor recorded** in the result JSONs.
 - Screening uses a 20% eval subset (5.1× faster); whole-model/downstream use full eval.
 - Layers 1–8, 10–17, 19–26, 28–31 still inherit labels from their nearest measured neighbour.
 - **One-shot calibration**: Gram matrices come from the dense model per layer, never re-derived
@@ -219,6 +249,14 @@ overlap. Across layers it compounds, which is why uniform whole-model pruning co
 
 # Next testing marathon — flagged experiments
 Ordered by expected value.
+
+0. **`random_recon` — the test our own finding #4 demands.** ⭐ If selection really is irrelevant,
+   then *random* tile selection + SparseGPT repair should match `wanda_recon`. If it does,
+   "selection doesn't matter" stops being an inference across two methods and becomes proven —
+   you may pick tiles by coin flip provided you repair. If it doesn't, selection matters after
+   all and Wanda's heuristic is doing real work we are currently dismissing. **Either outcome is
+   publishable, and it is ~10 lines** (`combined.reconstruct_given_tiles` already takes an
+   arbitrary tile set). Cheapest decisive experiment available.
 
 1. **Capability-derived sensitivity map** ⭐ — rebuild the map from *downstream accuracy* rather
    than perplexity, then re-run A/B. Finding #3(b) shows Policy B flatters the metric it was fit

@@ -37,7 +37,12 @@ from redundancy.data import load_calibration_dataset
 from redundancy.policy import load_sensitivity, classify, expand_to_model, allocate
 
 TASKS = ["hellaswag", "piqa", "arc_easy"]
-NEEDS_CALIB = ("wanda", "sparsegpt", "sparsegpt_recon")
+# wanda_recon needs the Gram matrix too: collect_stats_for_targets returns col-norms only for
+# the literal "wanda", and the full H for everything else -- which is what wanda_recon wants
+# (its Wanda scores come from sqrt(diag(H))).
+NEEDS_CALIB = ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon")
+METHODS = ["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "sparsegpt_recon",
+           "wanda_recon"]
 
 
 def prune_whole_model(model, args, layers, calib_samples, ratio_map=None):
@@ -70,8 +75,7 @@ def main():
     p = argparse.ArgumentParser(description="Downstream accuracy of a pruned whole model.")
     p.add_argument("--model", default="Qwen/Qwen3-4B")
     p.add_argument("--dense", action="store_true", help="Evaluate the unpruned model (baseline).")
-    p.add_argument("--method", default="sparsegpt_recon",
-                   choices=["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "sparsegpt_recon"])
+    p.add_argument("--method", default="sparsegpt_recon", choices=METHODS)
     p.add_argument("--prune-ratio", type=float, default=0.20)
     p.add_argument("--policy", choices=["uniform", "sensitivity"], default="uniform")
     p.add_argument("--tile-size", type=int, default=32)
