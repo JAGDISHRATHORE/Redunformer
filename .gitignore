@@ -54,3 +54,10 @@ models/*
 !models/.gitkeep
 datasets/*
 !datasets/.gitkeep
+
+# run logs and local artifacts (do not commit)
+*.log
+
+# personal draft docs (do not commit)
+Fiebiger_Evaluation_Extensions.pdf
+Fiebiger_Evaluation_Extensions.tex
