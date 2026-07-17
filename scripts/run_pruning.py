@@ -405,14 +405,19 @@ def run_wholemodel_experiment(model, tokenizer, dataset, args, layers, seed=None
     total_pruned = 0
     per_layer = []
 
+    # --matrices restricts whole-model pruning to specific projection types, pruned SIMULTANEOUSLY
+    # across every layer (no restore). Distinct from --all-matrices screening, which prunes one
+    # matrix, evaluates, and restores -- that measures each in isolation, not their composition.
+    scan_matrices = getattr(args, "matrices", None) or list(MATRICES.keys())
+
     for layer in layers:
         layer_stats = None
         if needs_calib:
-            target_names = [build_target_name(layer, m) for m in MATRICES.keys()]
+            target_names = [build_target_name(layer, m) for m in scan_matrices]
             layer_stats = collect_stats_for_targets(model, calib_samples, target_names, args.method)
 
         layer_pruned = 0
-        for matrix_name in MATRICES.keys():
+        for matrix_name in scan_matrices:
             target_name = build_target_name(layer, matrix_name)
             weight = get_target_weight(model, target_name)
             stat = layer_stats[target_name] if layer_stats is not None else None

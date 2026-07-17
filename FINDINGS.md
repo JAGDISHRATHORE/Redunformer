@@ -663,7 +663,14 @@ Everything here is **unplanned** — it starts only once the schedule above is c
    optimum may sit elsewhere.
 6. **Iterative / sequential calibration** — re-derive H after upstream layers are pruned. Directly
    attacks finding #5 (marginal ≠ joint) and Rathore §4.8. The most scientifically interesting
-   of these.
+   of these, and a candidate mechanism for **4b**: whole-model repair computes each layer's H
+   from the *dense* model, but once upstream layers are pruned the activations arriving at a
+   layer have drifted, so its H is **stale** — repair confidently solves the least-squares
+   problem for inputs that no longer arrive. The staleness compounds with depth, so the final
+   MLP (end of the longest chain) repairs against the most fictional H. Iterative calibration
+   re-measures H against the *actual* pruned inputs at each layer; comparing it to one-shot would
+   split our residual error into "information genuinely lost" (irreducible — deleted signal not
+   spanned by survivors) vs "H drifted" (fixable). Cheap relative to its value.
 7. **Calibration-seed robustness** — never tested; cheap insurance against a seed artifact.
 8. **Second model** (Qwen3-0.6B) for the downstream story — the perplexity findings replicate
    across sizes; the capability findings are single-model.
