@@ -21,10 +21,12 @@ Only the Gram matrix H is needed: Wanda's column norms are sqrt(diag(H)), so thi
 the statistic the sparsegpt path already collects -- no extra calibration pass.
 """
 
+import random as _random
+
 import torch
 
 from .recovery import _damped_inverse
-from .scoring import wanda_tile_scores
+from .scoring import wanda_tile_scores, _full_tile_positions
 
 
 def col_norms_from_hessian(hessian):
@@ -56,6 +58,33 @@ def reconstruct_given_tiles(weight, hessian, pruned_tiles, tile_size, damp=1e-2)
             A = Hinv[:, idx] @ S                              # (in, |P|)
             block = weight[r:r + tile_size, idx].float()      # (tile_size, |P|)
             weight[r:r + tile_size, :] -= (block @ A.t()).to(weight.dtype)
+
+
+def prune_random_recon(weight, tile_size, prune_ratio, hessian, seed, damp=1e-2):
+    """RANDOM selection + SparseGPT repair -- the decisive test of whether selection matters.
+
+    Selects the EXACT same tiles as run_pruning.prune_random at the same seed: identical tile
+    ordering (row-major, full tiles only) and identical `random.Random(seed).shuffle`. So
+
+        random  vs  random_recon   isolates REPAIR   (same tiles, repair on/off)
+        random_recon vs wanda_recon isolates SELECTION (repair on both, tiles differ)
+
+    If random_recon matches wanda_recon, selection is irrelevant *given* repair -- you may pick
+    tiles by coin flip. If it does not, selection is doing real work that our whole-model control
+    (where plain random already beats plain wanda) would otherwise have hidden.
+
+    Returns (num_tiles, num_pruned) -- same contract as the other prune_* functions.
+    """
+    rows, cols = weight.shape
+    tiles = _full_tile_positions(rows, cols, tile_size)
+    rng = _random.Random(seed)
+    rng.shuffle(tiles)
+    num_prune = int(len(tiles) * prune_ratio)
+    pruned = tiles[:num_prune]
+
+    reconstruct_given_tiles(weight, hessian, pruned, tile_size, damp)
+
+    return len(tiles), num_prune
 
 
 def prune_wanda_recon(weight, tile_size, prune_ratio, hessian, damp=1e-2):

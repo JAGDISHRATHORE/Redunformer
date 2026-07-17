@@ -20,7 +20,7 @@ from redundancy.eval import (
 from redundancy.hooks import collect_gram_stats
 from redundancy.scoring import wanda_tile_scores, sparsegpt_tile_errors
 from redundancy.recovery import reconstruct_prune_tiles
-from redundancy.combined import prune_wanda_recon
+from redundancy.combined import prune_wanda_recon, prune_random_recon
 from redundancy.policy import load_sensitivity, classify, expand_to_model, allocate
 
 
@@ -171,6 +171,11 @@ def apply_pruning(weight, method, tile_size, prune_ratio, seed, stat=None):
         # Wanda's selection + SparseGPT's repair: isolates selection from reconstruction.
         # stat is the Gram matrix H; Wanda's column norms are sqrt(diag(H)).
         return prune_wanda_recon(weight, tile_size, prune_ratio, stat)
+    if method == "random_recon":
+        # Random selection + SparseGPT's repair. Picks the SAME tiles as `random` at the same
+        # seed, so random vs random_recon isolates repair, and random_recon vs wanda_recon
+        # isolates selection. stat is the Gram matrix H.
+        return prune_random_recon(weight, tile_size, prune_ratio, stat, seed)
 
     raise ValueError(f"Unknown pruning method: {method}")
 
@@ -389,7 +394,7 @@ def run_wholemodel_experiment(model, tokenizer, dataset, args, layers, seed=None
     the next, so peak memory is one layer's Gram matrices. There is no restore -- the
     returned model is the fully pruned model (run one sparsity per process).
     """
-    needs_calib = args.method in ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon")
+    needs_calib = args.method in ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon", "random_recon")
     total_tiles = 0
     total_pruned = 0
     per_layer = []
@@ -709,7 +714,7 @@ def main():
         "--method",
         type=str,
         choices=["magnitude", "magnitude_high", "random", "wanda", "sparsegpt", "sparsegpt_recon",
-                 "wanda_recon"],
+                 "wanda_recon", "random_recon"],
         default="magnitude",
     )
 
@@ -848,7 +853,7 @@ def main():
     probe_ids = build_divergence_probe(tokenizer, dataset)
     reference = dense_reference_outputs(model, probe_ids)
 
-    needs_calibration = args.method in ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon")
+    needs_calibration = args.method in ("wanda", "sparsegpt", "sparsegpt_recon", "wanda_recon", "random_recon")
     calib_samples = None
     if needs_calibration:
         calib_samples = load_calibration_dataset(
