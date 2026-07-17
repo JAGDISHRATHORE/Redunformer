@@ -20,9 +20,9 @@ Numbers come from the runs in `experiments/`; plots in `experiments/*/plots/`.
    sparsity, but it flatters perplexity ~3× more than it improves actual capability, because its
    map was built from perplexity.
 
-**Status of the plan: 6 of Rathore's 10 strategies are done, 4 are outstanding** — see
-"Coverage of the planned strategies" below. Present that table rather than claiming the plan is
-complete.
+**Status of the plan: all 10 of Rathore's strategies are done.** Of the Fiebiger extensions, only
+the Stage 4 whole-model controls remain (running) — findings 1 and 4 lack their floor until then.
+See "Coverage of the planned strategies".
 
 ## Setup
 
@@ -61,6 +61,7 @@ right, and the planned gaps are now scheduled first.
 | 4c | Data-aware selection only helps at layer 0 | ✅ planned — **E1/E2 controls at Stage 2** |
 | 5 | "Robust" does not compose | ✅ planned — synthesis of W1/W2 vs Stage 4 |
 | 6 | Reallocation has an optimum | ⚠️ **mixed** — Policy B planned; depth concentration unplanned |
+| 6b | Layer-wide budget matching helps only where structure exists | ✅ planned — **W3** |
 | 7 | Robustness is the depth × matrix interaction | ✅ planned — **W4 cluster scan** |
 | 8 | Magnitude is worse than random | ✅ planned — E1/E2 (controls + seeds) |
 | 9 | Damage is sub-additive within a layer | ✅ planned — W2/S3 (whole-layer) |
@@ -328,6 +329,39 @@ Note: N=32 (prune only the robust zone, sensitive tail untouched) gives 1.24× �
 redundant part" works, but modestly. 24.17 is still ~1.8× dense: concentration optimizes *within*
 the broken regime, it does not unlock a new one.
 
+## 6b. Layer-wide budget matching helps only where there is structure to exploit (Rathore W3)
+His W3: hand a whole LAYER one tile budget and let the split between its seven matrices emerge
+from a pooled, mean-normalised Wanda ranking, instead of forcing every matrix to the same
+sparsity. Compared against uniform at the **identical tile count** (his fair comparison).
+
+| layer | @10% | @20% | @40% |
+|---|---|---|---|
+| 0 | 0.87× | **0.66×** | **0.61×** |
+| 9 | 1.56× | 1.10× | 0.64× |
+| 18 | 0.70× | 1.41× | 0.92× |
+| 27 | 0.52× | 0.46× | 1.01× |
+| **35** | **2.75×** | **2.18×** | **1.17×** |
+
+**7/15 cells — a coin flip overall.** But not noise: it wins big at layer 35, where real sensitivity
+structure exists, and loses at layer 0, where everything is robust so reallocation merely
+rearranges damage into a worse shape.
+
+**The allocation does NOT discover sensitivity.** ⚠️ Tempting claim, tested and refuted. Spearman
+between each matrix's allocated ratio and its *measured* sensitivity, across all 15 layer×sparsity
+cells: **mean ρ = −0.15**, mostly non-significant (p 0.25–0.88). At layer 18 it is **+0.79
+(p=0.036)** — there the ranking prunes the *sensitive* matrices **more**.
+
+What it actually does: `up_proj` is the least-pruned matrix in **12/15 cells regardless of whether
+`up_proj` is sensitive at that layer**. Since scores are mean-normalised within each matrix, that
+is not a scale artifact — `up_proj` simply has a **lighter left tail** than its peers. A
+distributional-shape property, not sensitivity.
+
+> **The layer-35 win is the ranking getting lucky where it matters most.** It starves `up_proj`
+> everywhere; at layer 35 `up_proj` happens to be the worst thing in the model to prune.
+
+**Consequence: the screening map is not redundant.** The seductive reading — "the scores already
+know, skip the expensive map" — is what ρ = −0.15 rules out.
+
 ## 7. Robustness is the INTERACTION of depth × projection type ⭐⭐
 Rathore's **W4 cluster scan** (his design, exactly): the most robust and most sensitive matrix
 types from Strategy 1 (`o_proj` +0.018, `up_proj` +0.676 — measured, not assumed), run across a
@@ -469,7 +503,7 @@ plan; and **Fiebiger, *Evaluation and Comparison Extensions*** (2026-07-16) — 
 |---|---|---|
 | W1 | Representative-layer / individual-matrix screening (5 layers × 7 matrices) | ✅ done (extended to 10/20/40%) |
 | W2 | Complete-layer uniform Wanda pruning | ✅ done |
-| **W3** | **Budget-matched *layer-wide* Wanda pruning** (one layer, one budget, allocation varies *between matrices*) | ❌ **not run** |
+| W3 | Budget-matched layer-wide Wanda pruning (one layer, one budget, allocation varies between matrices) | ✅ **done** → finding 6b |
 | W4 | Robust/sensitive region zoom-in (clusters around a robust and a sensitive candidate) | ✅ **done** — 14 layers × 3 sparsities → finding 7 |
 | W5 | Final whole-model Wanda: Policy A vs B, budget-matched | ✅ done |
 | S1 | Representative matrix reconstruction scan (mask-only vs reconstructed) | ✅ done |
@@ -552,7 +586,7 @@ done. **≈ 11 h total, sequential on one GPU.**
 | ~~1~~ | ~~Whole-layer controls~~ — **DONE** (90 runs, 6/6 exit 0) → finding **4c** | Fiebiger Stage 2 · E1/E2 | the floor immediately overturned an unexamined assumption | ✅ |
 | ~~2~~ | ~~Cluster / depth zoom-in (W4)~~ — **DONE** (84 runs) → finding **7**: the interaction dominates | Rathore W4 · Stage 3 | answered: neither depth nor matrix type — their interaction | ✅ |
 | ~~2b~~ | ~~S4 proper~~ — **DONE** (84 runs, 6/6 exit 0) → **refuted 4b's depth mechanism** | Rathore S4 | answered: reconstructability is component-specific, not depth-specific | ✅ |
-| **3** | **Layer-wide budget matching** — per-matrix normalised Wanda ranking pooled across one layer, prune the globally-lowest N; compare against uniform at the same tile count | **Rathore W3** | does non-uniform allocation help *within* a layer? The missing bridge between the per-matrix map and the whole-model policy. Needs ~30 lines (pooled normalised ranking; our `policy.py` only allocates by class at model scale) | ~1 h + code |
+| ~~3~~ | ~~Layer-wide budget matching (W3)~~ — **DONE** (15 runs, 3/3 exit 0) → finding **6b** | Rathore W3 | answered: conditional — 7/15, wins where sensitivity structure exists | ✅ |
 | **4** | **Whole-model controls** — random (5 seeds) + magnitude, 8-point grid | Fiebiger Stage 4 · E1/E2 | **the floor for findings 1 and 4.** Also answers whether data-aware selection beats random *at all* at whole-model scale — untested, and finding #4 hinges on it. Subsumes the `random_recon` idea | ~5 h |
 
 **Then, and only then:** the list below.
