@@ -288,6 +288,61 @@ overlap. Across layers it compounds, which is why uniform whole-model pruning co
 
 ---
 
+# The unplanned experiments — what prompted each, and what it did
+
+Four experiments were run that no plan scoped. Each was prompted by something in the planned
+results; none was scoped in advance, and **all of them should have waited until the plan was
+finished** (they didn't — see the schedule). Recording the reasoning so a reader can judge
+whether each was worth its detour.
+
+### 1. Low-sparsity downstream ladder — 1 / 2 / 5 / 10%
+**Prompt.** The planned downstream run (E4b) at 20% came back at **37 / 51 / 41%** retained
+ability, while perplexity read a mild-sounding 30.95 (2.3× dense). The planned grid's lowest
+whole-model point was 5%, and downstream had only been run at 20/30%. So the entire region where
+the model might still *work* had never been measured on any capability metric — we had a
+collapse and no idea where it started.
+**Did.** Extended the downstream ladder below the planned grid: 1 / 2 / 5 / 10% uniform
+`sparsegpt_recon`, plus two extra whole-model perplexity runs at 1/2% so each point had a
+perplexity to pair with.
+**Found.** 1% → 100% retained; 5% → **90%**; 10% → ~79%; 20% → ~43%. **Finding 1** (the ~5%
+answer) and the nonlinearity that sharpens **finding 2**.
+**Verdict.** The project's headline number came from here. It should still have run second.
+
+### 2. Depth concentration — same budget, 32/24/16/12/8 layers
+**Prompt.** Seb asked whether pruning only the redundant middle would avoid the damage. The
+planned data said the sensitive tail is only ~8% of the model, so avoiding it changes little —
+but it raised a sharper question the plan does not cover: since damage compounds *across* layers
+(finding 5), is it better to concentrate the same tiles into fewer layers?
+**Did.** Five whole-model runs at an identical 7.2 layer-equivalent budget (every layer holds the
+same 98,560 tiles, so N × ratio = 36 × 0.20 is exact), drawing only from layers 0–31.
+**Found.** An inverted-U: peak **1.28× at N=24**, parity at 16, **0.02× at N=8**. Fused with
+Policy B's reversal into one mechanism — compounding across layers vs super-linear damage within
+one (**finding 6**).
+**Verdict.** Genuinely new, and it explains a planned result (Policy B's reversal) that we had
+only described.
+
+### 3. `wanda_recon` ablation framing
+**Prompt.** The combined variant is **Rathore's** (S5) and was always scoped — but reading the
+code showed our ladder *confounds* selection and repair: `sparsegpt_recon` changes both at once
+versus `wanda`, so "recon is best" could not distinguish "eq-23 picks better tiles" from
+"repairing at all is what matters".
+**Did.** Ran his combined variant as a controlled ablation — the repair path is **bit-identical**
+between `wanda_recon` and `sparsegpt_recon` (CPU-verified), so selection is the only variable.
+**Found.** Repair is worth 1.8×–105×; selection 0.62–1.05×, i.e. nothing (**finding 4**).
+**Verdict.** The *experiment* was planned; only the framing was ours. It should have run weeks
+ago as part of S5.
+
+### 4. Layers 32/33/34 screening
+**Prompt.** Policy B's labels come from screening only 5 layers; every other layer inherits its
+nearest measured neighbour. That meant layers 32–34 were labelled *sensitive* purely because
+layer 35 is — an assumption underpinning every Policy B result, never checked.
+**Did.** Screened layers 32/33/34, all 7 matrices, 10/20/40%, `sparsegpt_recon`.
+**Found.** 32 and 33 are **robust**; 34 ramps; only 35 spikes. **Two of three were mislabelled**,
+so Policy B has been over-protecting layers that never needed it (**finding 7**).
+**Verdict.** This is a partial, differently-scoped **W4** — his design calls for a robust *and* a
+sensitive cluster using the two extreme matrix types. Doing it properly is task 2 of the
+schedule.
+
 # Coverage of the planned strategies
 Audited against the source documents, not from memory:
 **Rathore, *Pruning Strategies Using Metrics: Wanda and SparseGPT*** (2026-07-15) — the adopted
