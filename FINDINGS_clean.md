@@ -118,7 +118,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 ## 4b — Repair backfires exactly where it's needed most (final-layer MLP) (control-relative)
 
-**Result.** At the deepest layer (L35), adding *more* calibration makes things *worse*, and the globally-best method — `sparsegpt_recon` — is the **single worst** choice there (dPPL 5.39 at 40%, vs random's 2.38). Repairing against a stale/ill-conditioned final-layer signal actively harms. This is the one place the "always repair" rule inverts.
+**Result.** At the deepest layer (L35), adding *more* calibration makes things *worse*: ordered by how much reconstruction each method applies (random → magnitude → sparsegpt → wanda → `sparsegpt_recon`), damage rises monotonically, and the most heavily-reconstructed method — `sparsegpt_recon` — is the **single worst** choice there (dPPL 5.39 at 40%, vs random's 2.38). Repairing against a stale/ill-conditioned final-layer signal actively harms. This is the one place the "always repair" rule inverts.
 
 ## 4c / 4d — At the usable operating point, tile-selection loses to a coin flip ⭐⭐ (control-relative, corrected tile-32)
 
