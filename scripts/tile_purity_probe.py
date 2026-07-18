@@ -152,6 +152,45 @@ def within_col_null_pure(R, T, purity, nperm, rng):
     return out
 
 
+def _tiles_for(R, tiles):
+    rows, cols = R.shape
+    return [T for T in tiles if T > 1 and rows % T == 0 and cols % T == 0]
+
+
+def shuffle_null_multi(R, tiles, purity, nperm, rng):
+    """Within-matrix (global-shuffle) null for ALL tile sizes at once. Each draw
+    shuffles R a single time and counts pure tiles for every T, so the expensive
+    permutation is paid once per draw instead of once per (draw x T). Returns
+    {T: np.array(n_pure over nperm)}. Statistically identical to calling
+    shuffle_null_pure per T with the same stream."""
+    flat = R.reshape(-1).astype(np.int8)
+    rows, cols = R.shape
+    Ts = _tiles_for(R, tiles)
+    out = {T: np.empty(nperm, dtype=np.int64) for T in Ts}
+    for p in range(nperm):
+        perm = rng.permutation(flat).reshape(rows, cols)
+        for T in Ts:
+            thr = math.ceil(purity * T * T)
+            out[T][p] = int((tile_redundant_counts(perm, T) >= thr).sum())
+    return out
+
+
+def within_col_null_multi(R, tiles, purity, nperm, rng):
+    """Within-COLUMN permutation null for ALL tile sizes at once (see
+    within_col_null_pure). One column-shuffle per draw, counted for every T."""
+    rows, cols = R.shape
+    Ri = R.astype(np.int8)
+    Ts = _tiles_for(R, tiles)
+    out = {T: np.empty(nperm, dtype=np.int64) for T in Ts}
+    for p in range(nperm):
+        order = np.argsort(rng.random((rows, cols)), axis=0)
+        Rp = np.take_along_axis(Ri, order, axis=0)
+        for T in Ts:
+            thr = math.ceil(purity * T * T)
+            out[T][p] = int((tile_redundant_counts(Rp, T) >= thr).sum())
+    return out
+
+
 def zscore(obs, mean, var):
     sd = math.sqrt(var) if var > 0 else 0.0
     if sd == 0.0:
@@ -244,6 +283,10 @@ def analyze_map(imp, map_name, matrix_type, tiles, qs, nulls, nperm, purity, rng
     for q in qs:
         R = redundant_mask(imp, q)
         q_hat = float(R.mean())
+        # Permutation nulls are T-independent per draw -> compute once for all T
+        # (was once per T: the dominant full-matrix shuffle cost, now 5x cheaper).
+        shuffle_null = shuffle_null_multi(R, tiles, purity, nperm, rng) if "shuffle" in nulls else {}
+        wcol_null = within_col_null_multi(R, tiles, purity, nperm, rng) if "within_col" in nulls else {}
         for T in tiles:
             if rows % T or cols % T:
                 continue
@@ -264,13 +307,13 @@ def analyze_map(imp, map_name, matrix_type, tiles, qs, nulls, nperm, purity, rng
             rec["cells"] += 1
 
             if "shuffle" in nulls and T > 1:
-                s = shuffle_null_pure(R, T, purity, nperm, rng)
+                s = shuffle_null[T]
                 rec["shuffle_mean"] += float(np.mean(s))
                 rec["shuffle_var"] += float(np.var(s))
                 rec["shuffle_fano"] += fano(s) if np.mean(s) > 0 else 0.0
                 rec["shuffle_cells"] += 1
             if "within_col" in nulls and T > 1:
-                w = within_col_null_pure(R, T, purity, nperm, rng)
+                w = wcol_null[T]
                 rec["wcol_mean"] += float(np.mean(w))
                 rec["wcol_var"] += float(np.var(w))
                 rec["wcol_cells"] += 1
