@@ -128,7 +128,7 @@ def f1_redundancy_ladder():
     ax.set_ylabel("above-chance ability retained vs dense  (%)")
     ax.set_title("F1 — Only ~5% of tiles are removable before real-task ability breaks",
                  fontweight="bold", color=INK, pad=10)
-    ax.text(0.5, 1.005, "Wanda-select + SparseGPT-repair, uniform, tile-32 · "
+    ax.text(0.5, 1.005, "SparseGPT-select + SparseGPT-repair (sparsegpt_recon), uniform, tile-32 · "
             "retained = (acc-chance)/(dense-chance)",
             transform=ax.transAxes, ha="center", fontsize=9, color=MUTED)
     ax.grid(alpha=0.22)
@@ -538,7 +538,7 @@ def f8_magnitude_vs_random():
     ax.plot(xs, mag, "-s", color=VERM, lw=2.4, ms=8, label="magnitude", zorder=4)
 
     # annotate the only usable operating point, 5%
-    ax.annotate("5% (only usable point):\nmagnitude 3,449  vs  random 23\n~150x worse than a coin flip",
+    ax.annotate("5% (capability-preserving point):\nmagnitude 3,449 (destroyed)\nvs random ~23 (functional)",
                 xy=(5, mag[0]), xytext=(6.3, 4e4), fontsize=9.3, color=VERM, fontweight="bold",
                 arrowprops=dict(arrowstyle="->", color=VERM, lw=1.3))
     ax.scatter([5, 5], [mag[0], rmed[0]], s=90, facecolors="none",

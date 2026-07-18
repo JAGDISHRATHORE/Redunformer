@@ -15,6 +15,8 @@ Every finding below is written as **What we test → Why we ran it → Result �
 - **perplexity-absolute** — rests on raw perplexity; directionally useful but carries the caveat that perplexity misleads (that's Finding 2).
 
 > **Data note:** all headline numbers are at the corrected **32×32** tile size. A prior bug ran some controls at 64×64; those were re-run (commit `a1be30e`). A few findings still rest on archived 64×64 "shape evidence" — flagged explicitly where they occur.
+>
+> **Two dense baselines (important for re-deriving Δppl):** whole-model and downstream numbers use **full eval, dense = 13.22**. The screening-scale numbers (`screen` / `screen_wholelayer` / `cluster`, i.e. the per-layer and per-matrix Δppl in Findings 4b/4c/4d/5/7) use a **fixed 20% eval subset, dense = 13.56**. A screening Δppl is measured against 13.56, not 13.22.
 
 ---
 
@@ -35,7 +37,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 | 2 — perplexity is nonlinear | **downstream-anchored** | ✅ holds |
 | 2b — perplexity is *gameable* | downstream drop tile-32; ppl-gaming tile-64 | ⚠️ holds, but "one model" pairing is cross-tile (see caveats) |
 | 3 — Policy B games its own metric | **downstream-anchored** | ✅ holds |
-| 4 / 4e — repair ≫ selection | control-relative (same-tile ablation) | ✅ holds-stronger (clean tile-32 paired ablation) |
+| 4 — repair ≫ selection (incl. same-tile ablation) | control-relative | ✅ holds-stronger (clean tile-32) |
 | 4b — repair backfires at final MLP | control-relative | ✅ holds |
 | 4c / 4d — selection loses to random | control-relative (corrected tile-32 floor) | ✅ holds-stronger |
 | 5 — isolation does not compose | **downstream-anchored** | ✅ holds |
@@ -96,9 +98,9 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 **Why we ran it.** The sensitivity map was built *from perplexity*, so Policy B risks just flattering the number it was tuned on. Downstream accuracy at matched budgets separates a genuine win from a mirage.
 
-**Result.** Both halves hold. Policy B genuinely edges uniform on perplexity by ~1.1–1.6× (peaking 1.58× at 30%), but that **badly overstates the capability win**: at its 1.58× peak it buys essentially **zero** real ability (+3.1/−0.6/−0.4 pp = noise). It only wins for real at lower sparsity (20%: +5.2/+1.3/+7.1 pp). At *matched perplexity* it delivers ~10–18 pp **less** capability than uniform on all 6 measurements. Confirmed in metadata: it protects the perplexity-flagged "sensitive" class (pruned 0.042) and hammers the "robust" class (0.224) — and because that map came from perplexity (dominated by final layers feeding the LM head), it flatters the metric it was fit to.
+**Result.** Both halves hold. Policy B genuinely edges uniform on perplexity by ~1.1–1.6× (peaking 1.58× at 30%), but that **badly overstates the capability win**: at its 1.58× peak it buys essentially **zero** real ability (+3.2/−0.7/−0.5 retained-ability pp = noise). It only wins for real at lower sparsity (20%: +5.2/+1.3/+7.0 retained-ability pp). At *matched perplexity* it delivers ~10–18 pp **less** capability than uniform on all 6 measurements. Confirmed in metadata: it protects the perplexity-flagged "sensitive" class (pruned 0.042) and hammers the "robust" class (0.224) — and because that map came from perplexity (dominated by final layers feeding the LM head), it flatters the metric it was fit to.
 
-**Numbers (tile-32, sparsegpt_recon):** ppl gain 1.10/1.19/1.31/1.58/1.11× at 5/10/20/30/40%; downstream Δ(B−A) = +5.2/+1.3/+7.1 pp at 20%, +3.1/−0.6/−0.4 pp at 30%.
+**Numbers (tile-32, sparsegpt_recon):** ppl gain 1.10/1.19/1.31/1.58/1.11× at 5/10/20/30/40%; downstream Δ(B−A) in **retained-ability pp** = +5.2/+1.3/+7.0 at 20%, +3.2/−0.7/−0.5 at 30%.
 
 **Figure:** `figures/f3_policyB_divergence.png` — perplexity-gain bars vs capability-gain line; they diverge at 30%.
 
@@ -118,7 +120,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 ## 4b — Repair backfires exactly where it's needed most (final-layer MLP) (control-relative)
 
-**Result.** At the deepest layer (L35), adding *more* calibration makes things *worse*: ordered by how much reconstruction each method applies (random → magnitude → sparsegpt → wanda → `sparsegpt_recon`), damage rises monotonically, and the most heavily-reconstructed method — `sparsegpt_recon` — is the **single worst** choice there (dPPL 5.39 at 40%, vs random's 2.38). Repairing against a stale/ill-conditioned final-layer signal actively harms. This is the one place the "always repair" rule inverts.
+**Result.** At the deepest layer (L35), adding *more* calibration makes things *worse*. At 40%, ordered by how much a method leans on the calibration signal, the L35 damage rises: random 2.38 < magnitude 3.20 < sparsegpt 4.53 < wanda 4.80 < `sparsegpt_recon` 5.39 — so the most calibration-dependent method (`sparsegpt_recon`, the only one that actually reconstructs) is the **single worst** choice there. (Magnitude, with zero calibration, sits *inside* the random seed spread [2.18–3.37], so the clean contrast is the three calibrated methods vs the random floor.) Repairing against a stale/ill-conditioned final-layer signal actively harms — the one place the "always repair" rule inverts.
 
 ## 4c / 4d — At the usable operating point, tile-selection loses to a coin flip ⭐⭐ (control-relative, corrected tile-32)
 
@@ -126,7 +128,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 **Why we ran it.** A calibrated selection rule only earns its complexity if it beats chance. The earlier controls ran at the wrong tile size (64); we re-ran random + magnitude at tile-32 to give the claim a valid floor.
 
-**Result (sharper after correction).** At **5% whole-model** — the setting where the pruned model still works — Wanda and SparseGPT each beat only **1 of 5** random seeds and lose to the random median (22.87). Per layer: **L0** data-aware is essential (random blows up at 40%); **middle layers** ~indistinguishable from random until 40%; **L35** selection **backfires** — all 9 calibrated method×sparsity cells are worse than random (z = +3.5 to +6.6), and damage grows monotonically with how much calibration a method uses.
+**Result (sharper after correction).** At **5% whole-model** — the setting where the pruned model still works — Wanda and SparseGPT each beat only **1 of 5** random seeds and lose to the random median (22.87). Per layer: **L0** data-aware is essential (random blows up at 40%); **middle layers** ~indistinguishable from random until 40%; **L35** selection **backfires** — all 9 calibrated method×sparsity cells are worse than random (z = +3.5 to +6.6; the load-bearing claim). At 40% the damage also grows monotonically with how much a method relies on the calibration signal; at 10–20% the three calibrated methods are within noise of each other.
 
 **⚠️ Scope note (load-bearing — say it exactly this way):** "selection loses to random" is a claim about the **5% capability-preserving operating point** (the same 5% as Finding 1). Above it (10–20%), selection *does* start beating random — but the model is already past the capability cliff there (random median 221 ppl at 10%, 178k at 20%), so it's a race between broken models. Consistent framing across Findings 1/4c/4d/8: *at the sparsity where capability is preserved (5%), calibrated selection is worthless; above it, everything without repair is degrading anyway.* Also note the honest **low power**: 5 seeds, and the calibrated points (wanda 28.3) sit inside the random spread (18–48), so this is "selection ≤ a coin flip," not a large-margin loss.
 
@@ -144,7 +146,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 **Result.** It doesn't. One at a time, most of the model is harmless: at 20% sparsity 83% of screened matrices (with repair) barely move perplexity, and even a whole single layer's 7 matrices together stay near dense (except final-layer MLP). Yet pruning the **whole model** at 20% destroys most real ability (37/51/41% retained, ~60% gone). The map measures **marginal** damage; we were reading it as **joint**. The non-composition is an across-layer effect: 36 individually-fine hits compound. This is the quantified sequential-dependency limit.
 
-**Numbers (tile-32):** isolated @20% — 83% of matrices ΔPPL<0.12; whole-layer joint @20% — L0/9/18/27 ≤ +0.4 over dense, L35 = 17.16; whole-model joint @20% — ppl 30.95, ~43% ability retained.
+**Numbers:** isolated @20% (screening dense 13.56) — 83% of matrices ΔPPL<0.12; whole-layer joint @20% (screening dense 13.56) — **L0 13.72 / L9 13.95 / L18 13.61 / L27 13.65** (all within ~0.4 of screening dense) vs **L35 17.16**; whole-model joint @20% (full eval, dense 13.22) — ppl 30.95, ~43% ability retained (downstream).
 
 **Figure:** `figures/f5_scope_escalation.png` — perplexity vs pruning scope (matrix → layer → whole model), whole-model bar annotated "only 43% ability retained."
 
@@ -156,9 +158,9 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 **What we test.** (6) Given a fixed tile budget, spread it thinly across many layers or pack it densely into fewer? (6b) When a layer gets one budget, does letting its 7 matrices share it unevenly beat uniform sparsity?
 
-**Result (re-run clean at tile-32 — corrects an earlier tile-64 artifact).** The budget is packed into N ∈ {32, 24, 16, 12, 8} evenly-spaced layers (the recovered original design; local sparsity rises as N falls to hold the budget fixed). At tile-32 the result is **monotonic** — the most-spread setting is best and quality degrades steadily as you concentrate: **21.65 (N=32) → 22.31 (N=24) → 29.38 (N=16) → 47.02 (N=12) → 1185 (N=8, destroyed)**. **There is no interior optimum.** The earlier tile-64 run reported a "sweet spot" at N=24 (24.17, below N=32's 24.94); that **reversed at tile-32** (N=32 now *beats* N=24) — it was a within-noise artifact, exactly as suspected. The robust, keepable claim is only: *spreading a fixed budget is monotonically better than concentrating it, and extreme concentration collapses* — and that collapse is largely a restatement of Findings 5/9 (cross-layer compounding + the within-layer super-linear cliff), not independent evidence of a depth penalty.
+**Result (re-run clean at tile-32 — corrects an earlier tile-64 artifact).** The budget is packed into N ∈ {32, 24, 16, 12, 8} evenly-spaced layers (the recovered original design; local sparsity rises as N falls to hold the budget fixed). Tile-32 perplexities: **21.65 (N=32), 22.31 (N=24), 29.38 (N=16), 47.02 (N=12), 1185 (N=8, destroyed)**. The two most-spread settings (N=32, N=24) are **statistically indistinguishable** — a ~3% gap, and `sparsegpt_recon` is deterministic here (the 3 seeds returned identical perplexity, so there is no variance estimate). Quality then degrades **clearly** for N ≤ 16 and **collapses** at N=8. The earlier tile-64 run reported a "sweet spot" at N=24 (24.17 vs N=32's 24.94) — but that ordering **flips sign at tile-32** (N=32 now edges N=24), at the same ~3% magnitude, so the "optimum" was never real: **there is no interior optimum.** The robust, keepable claim is only: *spreading a fixed budget is at least as good as concentrating it, and extreme concentration collapses* — and that collapse is largely a restatement of Findings 5/9 (cross-layer compounding + the within-layer super-linear cliff), not independent evidence of a depth penalty.
 
-For **6b** (layer-budget matching): a coin flip overall (7/15), and on inspection the allocation does **not** actually discover sensitivity (it prunes L18's *sensitive* matrices *more*, not less; Spearman ρ ≈ −0.15). Its only real signal is the L35-vs-L0 effect-size contrast, not the win count. 6b is clean tile-32.
+For **6b** (layer-budget matching): a coin flip overall (7/15), and on inspection the allocation is **essentially uncorrelated with measured sensitivity** (Spearman |ρ| ≈ 0.15 ≈ 0) — so it does *not* discover which matrices are fragile; any win is a fixed "always starve up_proj" bias getting lucky, not intelligent structure exploitation. Its only real signal is the L35-vs-L0 effect-size contrast, not the win count. 6b is clean tile-32.
 
 **⚠️ Disclosed confounds (why this stays a secondary, exploratory finding):** (a) all depth configs prune only layers **0–31**, sparing the fragile tail 32–35 — so any "beats uniform" comparison is invalid (uniform prunes all 36 incl. the tail) and is **dropped**; (b) the over-concentration collapse is confounded with Finding 9's within-layer super-linear cliff (the fixed budget forces N=8 to 90% local sparsity). We present only the within-experiment monotonic trend, at tile-32.
 
@@ -186,7 +188,7 @@ For **6b** (layer-budget matching): a coin flip overall (7/15), and on inspectio
 
 **Why we ran it.** Magnitude is the obvious rule. If it can't even beat random block selection, tile pruning genuinely needs a smarter signal and naive intuition is a trap.
 
-**Result.** At 5% (the capability-preserving point) magnitude **destroys the model** (ppl 3449 — well into the "destroyed" zone) while random stays roughly functional (median 22.9, ~1.7× dense). State this **qualitatively**: *at the sparsity where random still works, magnitude is already destroyed* — the exact "×N-worse" ratio is not meaningful because its numerator sits in the destroyed zone (>1000 ppl). The direction is robust and reproduces on the 0.6B model across 196 layer×matrix cells (random beats magnitude 144–52; the one consistent exception is o_proj). Mechanism (unifies with F9): per cell magnitude is only *slightly* worse than random, but those tiny deficits **compound across 36 layers** into the model-scale gap ("aggregation loss").
+**Result.** At 5% (the capability-preserving point) magnitude **destroys the model** (ppl 3449 — well into the "destroyed" zone) while random stays roughly functional (median 22.9, ~1.7× dense). State this **qualitatively**: *at the sparsity where random still works, magnitude is already destroyed* — the exact "×N-worse" ratio is not meaningful because its numerator sits in the destroyed zone (>1000 ppl). The direction is robust and reproduces on the smaller **Qwen3-0.6B** model across 196 layer×matrix cells (*archived tile-64 cross-model check*): random beats magnitude 144–52; the one consistent exception is o_proj. Mechanism: per cell, magnitude loses because **within-tile magnitude-averaging hides the few important weights** in an otherwise low-norm tile ("aggregation loss" — a per-tile *selection* effect that explains the per-cell ordering); those per-cell deficits then **compound across layers** (this is Finding 9, a separate effect) into the model-scale collapse. We do not infer the exact model-scale factor from the per-cell median — the collapse is stated qualitatively.
 
 **Figure:** `figures/f8_magnitude_vs_random.png` — ppl (log) vs sparsity, magnitude vs random-median-with-band, 5% point annotated.
 
