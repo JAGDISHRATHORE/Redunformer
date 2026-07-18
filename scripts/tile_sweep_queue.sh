@@ -129,9 +129,13 @@ TASKS=(hellaswag piqa arc_easy)
 ###############################################################################
 
 # STEP 5: purity probe (first complete answer -- verdict + S + sweep priority).
-run_job "probe" "$PY" scripts/tile_purity_probe.py --model "$MODEL" --all-layers \
+# Cheap probe: 7 depth-spanning layers + low nperm (the permutation nulls on the big MLP
+# matrices are the cost; full --all-layers x nperm 200 was ~90 min). This gives the
+# diffuse/clustered verdict fast; a full-depth probe can follow later if the verdict is marginal.
+run_job "probe" "$PY" scripts/tile_purity_probe.py --model "$MODEL" \
+  --layers 0 6 12 18 24 30 35 \
   --tiles 1 2 4 8 16 32 --q 0.02 0.05 0.10 --scope per_matrix \
-  --maps wanda obs magnitude --null shuffle within_col --nperm 200 \
+  --maps wanda magnitude --null shuffle within_col --nperm 40 \
   --out "$TS_DIR/probe"
 
 # STEP 6: comparability anchor -- reproduce the archived 32x32 p5 downstream point
