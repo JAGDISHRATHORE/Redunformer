@@ -280,6 +280,11 @@ def main():
     p.add_argument("--tasks", nargs="+", default=["hellaswag", "piqa", "arc_easy"])
     p.add_argument("--batch-size", default="auto")
     p.add_argument("--limit", type=int, default=None)
+    p.add_argument("--eval-ppl", action="store_true",
+                   help="Evaluate WikiText-2 test perplexity (same eval as the tile ladder) "
+                        "instead of downstream lm-eval. Cheap; used for the 1x1-vs-tile ppl screen.")
+    p.add_argument("--eval-frac", type=float, default=1.0,
+                   help="Fraction of the perplexity eval set to use (matches run_pruning --eval-frac).")
     p.add_argument("--output", default=None)
     p.add_argument("--selftest", action="store_true",
                    help="CPU-only: validate masking + SparseGPT-repair math on synthetic data.")
@@ -337,15 +342,7 @@ def main():
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
 
-    import lm_eval
-    from lm_eval.models.huggingface import HFLM
-    print(f"Running lm-eval on tasks: {args.tasks}")
-    lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.batch_size)
-    res = lm_eval.simple_evaluate(model=lm, tasks=args.tasks, limit=args.limit)
-
-    tag = f"unstructured_{args.method}_repair-{repair}_p{int(args.prune_ratio*100)}_T1"
     out = {
-        "tag": tag,
         "model": args.model,
         "method": args.method,
         "repair": repair,
@@ -355,15 +352,40 @@ def main():
         "achieved_sparsity": achieved,
         "total_weights": total_w,
         "total_pruned": total_pruned,
-        "limit": args.limit,
-        "results": res["results"],
+        # Provenance: record calibration config so 1x1 files are self-documenting and
+        # comparable to the 32x32 ladder (the 128-vs-64 calib confound hid here before).
+        "calib_samples": args.calib_samples if needs_calib else None,
+        "calib_seqlen": args.calib_seqlen if needs_calib else None,
     }
-    path = args.output or os.path.join("experiments", "tilesize", "downstream", f"{tag}.json")
-    save_json(path, out)
-    print("\n=== downstream accuracy (unstructured / T=1) ===")
-    for t, v in res["results"].items():
-        acc = v.get("acc_norm,none", v.get("acc,none"))
-        print(f"  {t:12} {acc}")
+
+    if args.eval_ppl:
+        # WikiText-2 test perplexity -- the SAME eval the tile ladder uses, so the
+        # 1x1 point drops straight onto the C(T) perplexity curve (no lm-eval).
+        from redundancy.data import load_evaluation_dataset
+        from redundancy.eval import evaluate_perplexity
+        print(f"Evaluating WikiText-2 test perplexity (eval_frac={args.eval_frac}) ...")
+        dataset = load_evaluation_dataset()
+        ppl = evaluate_perplexity(model, tokenizer, dataset, eval_frac=args.eval_frac)
+        tag = f"unstructured_{args.method}_repair-{repair}_p{int(args.prune_ratio*100)}_T1_ppl"
+        out.update({"tag": tag, "eval_frac": args.eval_frac, "perplexity": ppl})
+        path = args.output or os.path.join("experiments", "tilesize", "ppl", f"{tag}.json")
+        save_json(path, out)
+        print(f"\n=== perplexity (unstructured / T=1 / p={args.prune_ratio}) ===")
+        print(f"  WikiText-2 test perplexity: {ppl:.4f}")
+    else:
+        import lm_eval
+        from lm_eval.models.huggingface import HFLM
+        print(f"Running lm-eval on tasks: {args.tasks}")
+        lm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.batch_size)
+        res = lm_eval.simple_evaluate(model=lm, tasks=args.tasks, limit=args.limit)
+        tag = f"unstructured_{args.method}_repair-{repair}_p{int(args.prune_ratio*100)}_T1"
+        out.update({"tag": tag, "limit": args.limit, "results": res["results"]})
+        path = args.output or os.path.join("experiments", "tilesize", "downstream", f"{tag}.json")
+        save_json(path, out)
+        print("\n=== downstream accuracy (unstructured / T=1) ===")
+        for t, v in res["results"].items():
+            acc = v.get("acc_norm,none", v.get("acc,none"))
+            print(f"  {t:12} {acc}")
 
 
 # ----------------------------------------------------------------------------

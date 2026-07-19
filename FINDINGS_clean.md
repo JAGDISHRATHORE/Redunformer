@@ -1,6 +1,6 @@
 # Tile-Level Redundancy in LLMs — Findings (Qwen3-4B)
 
-**One line:** You can delete about **5% of the model** (as 32×32 weight-tiles) before its real-task ability starts to break — *far* less than perplexity implies — and the thing that makes pruning work is **repairing the surviving weights, not cleverly choosing which tiles to cut.**
+**One line:** You can delete about **5% of the model** (as 32×32 weight-tiles) before its real-task ability starts to break — *far* less than perplexity implies — and the thing that makes pruning work is **repairing the surviving weights, not cleverly choosing which tiles to cut.** *(That 5% is the ceiling for hardware-usable **block** pruning specifically — the model's underlying redundancy is ~8× larger but too **diffuse** to cash as blocks; see Finding 10.)*
 
 *Model: Qwen/Qwen3-4B. Tile size: 32×32 (project standard, Rathore §2.4). Dense WikiText perplexity = 13.22. Downstream ability measured on HellaSwag / PIQA / ARC-Easy via lm-eval, normalised to above-chance range: retained = (acc − chance) / (acc_dense − chance).*
 
@@ -20,12 +20,13 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 ---
 
-## The four things worth saying in the presentation
+## The five things worth saying in the presentation
 
-1. **~5% is the real redundancy budget** (downstream-anchored) — perplexity suggested 40–70%, and it was wrong.
+1. **~5% is the real *structured* redundancy budget** (downstream-anchored) — perplexity suggested 40–70%, and it was wrong.
 2. **Perplexity is not just a loose proxy — it is *gameable*.** You can push perplexity *below dense* while the model gets measurably worse on real tasks.
 3. **Repair is the whole method.** Which tiles you delete barely matters; reconstructing the surviving weights is what preserves ability. Calibrated tile-selection loses to a coin flip at the usable operating point.
 4. **Redundancy is not a per-part property.** Pieces that are safe alone are not safe together, and safety is the *interaction* of depth × matrix-type, not either alone.
+5. **The 5% is a *structured-pruning tax*, not the model's redundancy limit.** Delete the *same* fraction as scattered **1×1** weights (same repair) and the model keeps ~100% of ability to 20% and ~82% at 50% — the redundancy is real and ~8× larger than 5%, just **diffuse**, so only *block* pruning pays the tax. Honest caveat: 1×1 sparsity buys no hardware speedup, so 5% stays the *usable* structured ceiling (Finding 10).
 
 ---
 
@@ -35,7 +36,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 |---|---|---|
 | 1 — ~5% redundancy ladder | **downstream-anchored** | ✅ holds |
 | 2 — perplexity is nonlinear | **downstream-anchored** | ✅ holds |
-| 2b — perplexity is *gameable* | downstream drop tile-32; ppl-gaming tile-64 | ⚠️ holds, but "one model" pairing is cross-tile (see caveats) |
+| 2b — perplexity is *gameable* | **now single-tile: gaming + drop both tile-32** | ✅ holds (cross-tile gap closed) |
 | 3 — Policy B games its own metric | **downstream-anchored** | ✅ holds |
 | 4 — repair ≫ selection (incl. same-tile ablation) | control-relative | ✅ holds-stronger (clean tile-32) |
 | 4b — repair backfires at final MLP | control-relative | ✅ holds |
@@ -45,6 +46,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 | 7 — depth × matrix interaction | control-relative; **now tile-32**, perplexity-only, marginal | ⚠️ holds as a marginal perplexity-sensitivity map |
 | 8 — magnitude < random | control-relative (vs random control) | ✅ holds |
 | 9 — damage sub-additive in-layer, compounds across | perplexity-absolute | ⚠️ direction holds, carries caveat |
+| 10 — 5% is a *structured-pruning tax* (1×1 ≫ 32×32) | **downstream-anchored** (+ perplexity) | ✅ holds — 1×1 keeps ~100% to 20%, ~82% at 50% |
 
 ---
 
@@ -56,7 +58,7 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 **Why we ran it.** Our perplexity curves implied 40–70% was removable. Perplexity is only a proxy; we wanted the honest number judged on abilities a person cares about.
 
-**Result.** ~5% of tiles can be removed while keeping **~90%** of above-chance ability — and it lands at ~90% on all three tasks (the exact 90/90/90 is a rounding coincidence, not a law). **5% is the capability-*preserving* operating point** (~90% retained); it is not a cliff — 10% is still *usable-but-degraded* (~79%), and the real collapse is between 10% and 20% (79% → 43%). This 5%-vs-10% distinction matters for Findings 4c/4d/8, whose "selection loses to a coin flip" claim is scoped specifically to the 5% capability-preserving point.
+**Result.** ~5% of tiles can be removed while keeping **~90%** of above-chance ability — and it lands at ~90% on all three tasks (the exact 90/90/90 is a rounding coincidence, not a law). **5% is the capability-*preserving* operating point** (~90% retained); it is not a cliff — 10% is still *usable-but-degraded* (~79%), and the real collapse is between 10% and 20% (79% → 43%). This 5%-vs-10% distinction matters for Findings 4c/4d/8, whose "selection loses to a coin flip" claim is scoped specifically to the 5% capability-preserving point. **(This 5% is the *structured* ceiling — see Finding 10: the same weights removed as scattered 1×1 keep ~100% ability to 20%; the model's redundancy is ~8× larger but diffuse.)**
 
 **Numbers (retained above-chance ability, HellaSwag/PIQA/ARC-Easy; tile-32):** 1% → 100/103/98; 2% → 97/98/93; **5% → 90/90/90 (avg 90%)**; 10% → 73/81/82 (avg 79%); 20% → 37/51/41 (avg 43%); 30% → 17/29/24 (avg 23%). Paired WikiText ppl: 5%=15.62, 10%=18.78, 20%=30.95, 30%=61.56 (all tile-32).
 
@@ -78,15 +80,15 @@ Every finding below is written as **What we test → Why we ran it → Result �
 
 ---
 
-## 2b — Perplexity is *adversarially gameable*: push it below dense while the model gets worse ⭐⭐ (mixed tile — see caveat)
+## 2b — Perplexity is *adversarially gameable*: push it below dense while the model gets worse ⭐⭐ (now single-tile at tile-32)
 
 **What we test.** Whether you can deliberately make perplexity look *better* while real ability drops — by masking o_proj only in the layers where it helps in isolation.
 
 **Why we ran it.** This is the sharpest possible statement of Finding 2, and the reason we ran ~11 downstream evals: if perplexity can be *driven the opposite direction* from capability, the field's default yardstick is not just loose but exploitable.
 
-**Result.** Restricting Wanda o_proj masking to the 8 layers where o_proj improved in isolation (17–21, 32, 34, 35) drives WikiText perplexity **below dense** — 12.24 at 20% dose (−0.98) and **11.50 at 40% (−1.72, i.e. 13% "better" than dense)** — while real ability goes flat then down: at 40% HellaSwag drops a genuine **−3.6σ**, ARC-Easy −1.5σ, PIQA flat. Two controls make it airtight: blanket o_proj across all 36 layers never beats dense (14.61 at 20%), and SparseGPT **repair erases the perplexity win entirely** (13.29 / +0.07) — because repair reconstructs the dense output. The "gain" exists *only because you didn't reconstruct*: a textbook proxy exploit.
+**Result (now at the project-standard tile-32).** Restricting Wanda o_proj masking to the 8 layers where o_proj improved in isolation (17–21, 32, 34, 35) drives WikiText perplexity **below dense at tile-32** — **12.21 at 20% dose (−1.01)** and **11.45 at 40% (−1.77, i.e. 13% "better" than dense)** — while real ability goes flat then down: at 40% HellaSwag drops a genuine **−3.6σ**, ARC-Easy −1.5σ, PIQA flat. Every point reproduces the archived tile-64 run within noise (tile-64 was 12.24 / 11.50). Two controls make it airtight, **also re-run at tile-32**: blanket o_proj across all 36 layers never beats dense (13.93 at 20%), and SparseGPT **repair erases the perplexity win entirely** (13.28 / +0.06 at 20%, 13.64 / +0.42 at 40%) — because repair reconstructs the dense output. The "gain" exists *only because you didn't reconstruct*: a textbook proxy exploit.
 
-**⚠️ Caveat (most attackable claim in the set):** two things to state plainly. (1) The perplexity-gaming numbers are archived **tile-64**; the downstream drop is **tile-32** (`run_downstream.py` re-prunes fresh at tile-32 and logs no perplexity). So the "two metrics move in opposite directions *in one network*" table is a **cross-tile composite** — each half is solid within its own tile size, but no *single* model was measured on both. Before presenting it as one network, run one tile-32 perplexity measurement on the exact gamed model *(scheduled — see Pending)*. (2) The opposite-direction effect is carried by **one task at one dose** — HellaSwag at 40% (−3.6σ, ~1.6 pp absolute); PIQA is flat and ARC −1.5σ — and the below-dense perplexity magnitude is partly select-on-WikiText / measure-on-WikiText overfitting. The *direction* and the controls are sound; the "one network" framing is the part not yet literally demonstrated.
+**⚠️ Caveat (updated).** (1) **Cross-tile gap — now CLOSED.** The gaming *and* the downstream drop are both **tile-32**: the exact gamed model (Wanda o_proj, 8 layers, 40%) reads **11.45 ppl (looks better than dense)** while its HellaSwag ability drops **−3.6σ** — one single tile-32 network, both metrics, opposite directions. (Originally the ppl was archived tile-64 and the drop tile-32; the tile-32 ppl re-run — `experiments/oproj_targeted_tile32/` — removes the splice.) (2) **Still one task at one dose** — the opposite-direction effect is carried mainly by HellaSwag at 40% (−3.6σ, ~1.6 pp absolute); PIQA is flat and ARC −1.5σ — and the below-dense magnitude is partly select-on-WikiText / measure-on-WikiText overfitting. The *direction* and the controls are sound; single-task dependence is the remaining honest limit.
 
 **Figure:** `figures/f2_perplexity_scissors.png` — capability-vs-perplexity-ratio scatter; the o_proj points sit left of the dense line ("looks improved") yet at/below dense ability.
 
@@ -198,6 +200,26 @@ For **6b** (layer-budget matching): a coin flip overall (7/15), and on inspectio
 
 ---
 
+## 10 — The 5% is a *structured-pruning tax*, not the model's redundancy limit ⭐⭐⭐ (downstream-anchored + perplexity)
+
+**What we test.** Whether the ~5% ceiling (Finding 1) is a property of *the model* or of *the 32×32 tile*. We delete the **same weights** at the **finest possible granularity (1×1, unstructured)** with the **same SparseGPT repair**, matched weight-sparsity — only the block shape differs.
+
+**Why we ran it.** Standard unstructured SparseGPT reaches ~50% on LLMs; we get ~5% at 32×32. If 1×1 also broke at ~5%, then 5% is a real redundancy limit. If 1×1 sailed on, 5% is the price of *block structure*. (The purity probe predicted the answer: the removable weights are **diffuse** — harvestable as pure tiles ≈0 at any block ≥4×4 — so only fully-unstructured pruning should reach the redundancy.)
+
+**Result.** 1×1 blows the 32×32 ceiling away — on **both** axes, so it is not perplexity-gaming:
+- **Perplexity** (same repair, matched sparsity): 1×1 stays near dense where 32×32 collapses — **1×1 at 50% (15.69) ≈ 32×32 at 5% (15.62)**, a ~10× sparsity ratio at iso-perplexity.
+- **Downstream capability** (matched calib 64, real tasks): 1×1 keeps **~100% of ability through 20%, 98% at 30%, 82% at 50%**, versus 32×32's 79% / 43% / 23%. 1×1 crosses the 90%-retained bar (Finding 1's definition of the 5% point) at **~40%** — so on the *same capability axis*, unstructured redundancy is **~8× larger** than the 32×32 ceiling.
+
+So the model's redundancy is real and large (>20% removable at ~zero capability loss); it is just **diffuse** — scattered weight-by-weight, not packaged into removable blocks — so any tiling ≥2×2 can't reach it. The comparison is **conservative**: 32×32 actually gets the *stronger* exact joint-LS tile repair while 1×1 gets the weaker sequential sweep, so giving 1×1 the exact repair would only widen the gap.
+
+**⚠️ The honest framing — say it exactly this way.** This is a **structured-pruning tax, not a free 10× win.** Unstructured 1×1 zeros give **no speedup on dense-GEMM hardware** (the matmul still runs every multiply); only *block/tile* sparsity maps to acceleration — and that is precisely the kind that caps at ~5%. So: *in principle removable* ≈ >20% (unstructured); *removable in a way hardware can exploit* ≈ 5% (structured); the large gap between them is the tax this model pays for its diffuse redundancy. Read 5% as "block pruning cashes only a small slice of a large, scattered redundancy," **not** "this model has little redundancy." (Secondary caveat: the 1×1 repair calibrates on WikiText and the downstream tasks are multiple-choice; a generative/OOD probe would further harden the capability half.)
+
+**Numbers (Qwen3-4B, dense ppl 13.22 / retained 1.00):** 1×1+repair ppl 13.48 / 13.73 / 14.51 / 15.69 at 20/30/40/50% (32×32: 30.95 / 61.56 / 76.30 / 137.52). 1×1 retained-ability 1.00 / 1.00 / 0.98 / 0.82 at 10/20/30/50% (32×32: 0.79 / 0.43 / 0.23 / collapsed). Probe: harvestable-as-pure-tiles 5.0% → 0.02% → ~0 at T = 1 → 2 → ≥4 (diffuse).
+
+**Figure:** `figures/f10_structured_tax.png` — two panels: (L) perplexity vs sparsity, 1×1 vs 32×32; (R) retained ability vs sparsity, 1×1 vs 32×32, 90% line + the ~5% → ~40% crossing.
+
+---
+
 # Two things we are careful about (for the talk)
 
 1. **"Usable operating point" means the capability-*preserving* point, 5%.** Findings 4c/4d/8 say selection/magnitude lose "at the usable point" — that point is 5% (~90% ability retained). Finding 1's 10% is *usable-but-degraded* (~79%), a different thing; above 5% the selection/magnitude comparisons flip or become races between broken models. We state the 5% scope on every affected finding.
@@ -207,27 +229,16 @@ For **6b** (layer-budget matching): a coin flip overall (7/15), and on inspectio
 
 # Pending experiments
 
-## ★ The tile-size experiment — is 5% real, or an artifact of the 32×32 tile? (flagship)
+## ★ The tile-size experiment — RESOLVED (now Finding 10)
 
-**The question.** Every finding above is at 32×32, which is *large*. Unstructured pruning (1×1) recovers ~50% on LLMs; we get ~5%. So the ~5% ceiling — and "selection ≈ random" and "magnitude < random" — may be **artifacts of coarse granularity**, not real properties of Qwen3-4B. This experiment settles it. *(Designed by a 6-lens planning council.)*
+**Verdict: the 5% is a structured-pruning tax — not a tiling artifact, and not the model's redundancy limit.** The two fast instruments the plan called for both landed and agree:
+- **Purity probe** → the removable 5% is **diffuse** (harvestable as pure tiles ≈0 at any block ≥4×4; only 1×1 reaches it). This *predicted* that no intermediate tile size would help.
+- **1×1 endpoint (decisive)** → confirmed on perplexity **and** downstream (Finding 10): unstructured redundancy is ~8× the 32×32 ceiling, but is uncashable as hardware speedup.
 
-**The design.** Treat tile size **T as the redundancy's *correlation length*** and measure it three ways that must agree:
-1. **Purity probe** (Seb's front-end — *predicts*): a weight-space analysis that measures whether the removable 5% is spatially *clustered* (at some scale S) or *diffuse*. Mark the bottom-5% of weights by importance (Wanda + SparseGPT-saliency maps) and, for each T, measure the fraction of near-pure tiles vs a permutation null. Diffuse → smaller tiles always better, no sweet spot. Clustered at S → optimal tile ≈ S. Runs in minutes; sets the sweep priority.
-2. **Perplexity/KL screen** (*previews*): fast proxy sweep, clearly labelled "not a capability claim."
-3. **Downstream retained-ability ladder** (*decides*): the citable curve.
-
-**What's swept:** new square sizes **{16, 8, 4}** + **1×1** (unstructured ceiling, separate vectorized code) — **32×32 is the existing reference, not re-run.** The model's matrix dims (2560/4096/1024/9728) divide every T exactly, so "% weights zeroed" = "% tiles zeroed" with **zero edge effects** (this is why 24 was ruled out — non-integer). Whole-model uniform, `sparsegpt_recon`, exact rungs {5,10,20}%, 5% first (the only point where capability is preserved).
-
-**Pre-registered outcomes:**
-- **If coarse-granularity artifact:** as T shrinks, three findings move *together* — the ~5% ceiling rises, selection regains power over random, and magnitude<random vanishes — and all three crossovers coincide with the probe's correlation length S. → headline becomes *"redundancy is granularity-gated,"* and we ship the structured-pruning tax curve.
-- **If real:** probe is diffuse and the downstream ladder stays flat across 32/16/8/4. → *"~5% is a real property of Qwen3-4B, not a tiling artifact"* — we ship that null.
-
-**Staged delivery (what you get first):** the purity-probe verdict + a perplexity/KL screen at T16/T8 (T4 last) is a **complete first-pass answer**; the rigorous downstream ladder is launched and runs multi-day. One GPU job at a time, behind the recon refix.
-
-**Later (noted, not run):** **non-square tile shapes** (1×N column strips) — the purity probe reports row-vs-column anisotropy, so it tells us *in advance* whether shape is worth chasing.
+**Not run, now deprioritized — the intermediate sweep {16, 8, 4}.** The probe predicts a null there (harvestable ≈0 for every T≥4) and the 1×1 endpoint already brackets the curve, so multi-day GPU on intermediate square tiles has near-zero discriminating power. One T=4 anchor could be added later purely to *draw* the C(T) curve — it will not change the conclusion. **Non-square shapes (1×N strips):** probe anisotropy is low (≈0.24, not columnar), so shape is not worth chasing either.
 
 ## Other pending items
-- **Close the 2b cross-tile gap:** one tile-32 perplexity run on the exact gamed o_proj model, so "opposite directions in one network" is literally one model (the most attackable claim → cheapest fix).
+- ~~Close the 2b cross-tile gap~~ **✓ done** — tile-32 ppl re-run of the exact gamed model reproduces below-dense (12.21 / 11.45); both controls also re-run tile-32 (Finding 2b; `experiments/oproj_targeted_tile32/`).
 - ~~Confirm Finding 6 at tile-32~~ **✓ done** — re-run refuted the N=24 optimum (it's monotonic at tile-32); Finding 7 also re-run clean at tile-32.
 - **Recommended-method capability data:** wanda_recon / random_recon downstream ladder (finalising at tile-32 now).
 - **Second model (Llama-3.2-3B)** — the generality gate; every capability finding is n=1 model.
@@ -237,7 +248,7 @@ For **6b** (layer-budget matching): a coin flip overall (7/15), and on inspectio
 
 # Where things live
 
-- Active data (all tile-32): `experiments/{downstream, wholemodel, screen, screen_wholelayer, layer_budget, depth, screen_cluster}/` — `depth` (F6) and `screen_cluster` (F7) were re-run clean at tile-32.
+- Active data (all tile-32): `experiments/{downstream, wholemodel, screen, screen_wholelayer, layer_budget, depth, screen_cluster}/` — `depth` (F6) and `screen_cluster` (F7) were re-run clean at tile-32. **Finding 10:** `experiments/tilesize/{ppl, downstream, probe}/` (1×1 sweep + purity probe). **Finding 2b tile-32:** `experiments/oproj_targeted_tile32/` + `experiments/oproj_blanket_tile32/`.
 - Archived tile-64 (superseded / closed threads): `experiments/archive/{full_scan, depth, oproj*, screen_cluster*}/` — the old tile-64 versions, kept for provenance.
 - Figures: `figures/`
 - Raw working log with full history: `FINDINGS.md`
