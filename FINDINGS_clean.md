@@ -6,6 +6,20 @@
 
 ---
 
+## Scope, contribution & what we're asking (for the supervisor)
+
+**What this is.** A mid-project **checkpoint**, not a finished paper: 10 findings on tile-level (T×T block) pruning of Qwen3-4B, all at the corrected tile-32 standard, downstream-anchored where it matters, cleared by an internal multi-reviewer QC pass.
+
+**What's genuinely ours (contribution).** *Not a new pruning method* — a careful, honest **characterization** of tile-level pruning: (i) the downstream-anchored **~5% structured budget** (perplexity implied 40–70%); (ii) **repair ≫ tile-selection** (random-select + repair beats calibrated selection); (iii) a concrete demonstration that perplexity is **adversarially gameable**; (iv) the **purity probe** showing the redundancy is *diffuse*; (v) Finding 10 placing our 5% against the unstructured ceiling to show it's a **structured-pruning tax**, not a redundancy limit.
+
+**What we are *not* claiming.** 1×1 (unstructured) pruning to ~50% is **standard SparseGPT / Wanda (2023)** — we reproduce it only as a *known reference point* to bound the tax; it is not a discovery and gives no hardware speedup. "Structured is harder than unstructured" is also known; our value is the specific, per-finding, downstream-anchored measurement on this model.
+
+**Three caveats we state out loud:** (1) every capability finding is **n=1 model** (Qwen3-4B) — the generality gate; (2) F1's headline ladder uses `sparsegpt_recon`, which our own F4 shows is the **weakest** repair variant; (3) F2b's sharpest claim rests on **one task (HellaSwag) at one dose**.
+
+**Three forks we're holding for your steering** (deliberately not pre-run): **(A)** second model (Llama-3.2-3B) for generality; **(B)** iterative/sequential calibration — our one shot at *raising* the 5% ceiling; **(C)** 1×N row strips — could convert some diffuse redundancy into hardware-usable structure. *Which should we spend the GPU on first?*
+
+---
+
 ## How to read this doc
 
 Every finding below is written as **What we test → Why we ran it → Result → Reliability**. The *Reliability* tag is the single most important label:
@@ -212,7 +226,7 @@ For **6b** (layer-budget matching): a coin flip overall (7/15), and on inspectio
 
 So the model's redundancy is real and large (>20% removable at ~zero capability loss); it is just **diffuse** — scattered weight-by-weight, not packaged into removable blocks — so any tiling ≥2×2 can't reach it. The comparison is **conservative**: 32×32 actually gets the *stronger* exact joint-LS tile repair while 1×1 gets the weaker sequential sweep, so giving 1×1 the exact repair would only widen the gap.
 
-**⚠️ The honest framing — say it exactly this way.** This is a **structured-pruning tax, not a free 10× win.** Unstructured 1×1 zeros give **no speedup on dense-GEMM hardware** (the matmul still runs every multiply); only *block/tile* sparsity maps to acceleration — and that is precisely the kind that caps at ~5%. So: *in principle removable* ≈ >20% (unstructured); *removable in a way hardware can exploit* ≈ 5% (structured); the large gap between them is the tax this model pays for its diffuse redundancy. Read 5% as "block pruning cashes only a small slice of a large, scattered redundancy," **not** "this model has little redundancy." (Secondary caveat: the 1×1 repair calibrates on WikiText and the downstream tasks are multiple-choice; a generative/OOD probe would further harden the capability half.)
+**⚠️ The honest framing — say it exactly this way.** This is a **structured-pruning tax, not a free 10× win.** Unstructured 1×1 zeros give **no speedup on dense-GEMM hardware** (the matmul still runs every multiply); only *block/tile* sparsity maps to acceleration — and that is precisely the kind that caps at ~5%. So: *in principle removable* ≈ >20% (unstructured); *removable in a way hardware can exploit* ≈ 5% (structured); the large gap between them is the tax this model pays for its diffuse redundancy. Read 5% as "block pruning cashes only a small slice of a large, scattered redundancy," **not** "this model has little redundancy." (Secondary caveat: the 1×1 repair calibrates on WikiText and the downstream tasks are multiple-choice; a generative/OOD probe would further harden the capability half.) **Baseline note:** 1×1 unstructured pruning to ~50% is *standard* SparseGPT/Wanda — used here only as a known reference point to bound the tax, **not** as a new result.
 
 **Numbers (Qwen3-4B, dense ppl 13.22 / retained 1.00):** 1×1+repair ppl 13.48 / 13.73 / 14.51 / 15.69 at 20/30/40/50% (32×32: 30.95 / 61.56 / 76.30 / 137.52). 1×1 retained-ability 1.00 / 1.00 / 0.98 / 0.91 / 0.82 at 10/20/30/40/50% (32×32: 0.79 / 0.43 / 0.23 / collapsed-at-50 *inferred* from ppl 137.5, no downstream run). Probe: harvestable-as-pure-tiles 5.0% → 0.02% → ~0 at T = 1 → 2 → ≥4 (practically diffuse).
 
