@@ -1,0 +1,16 @@
+{
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "method": "unstructured_sparsegpt",
+    "repair": "sparsegpt",
+    "comparison": "row",
+    "prune_ratio": 0.4,
+    "tile_size": 1,
+    "achieved_sparsity": 0.3984375095793179,
+    "total_weights": 2818572288,
+    "total_pruned": 1123024923,
+    "calib_samples": 64,
+    "calib_seqlen": 512,
+    "tag": "unstructured_unstructured_sparsegpt_repair-sparsegpt_p40_T1_ppl",
+    "eval_frac": 1.0,
+    "perplexity": 11.968579292297363
+}

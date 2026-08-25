@@ -1,0 +1,18 @@
+{
+    "tag": "iter_sgr_K1_p20",
+    "model": "Qwen/Qwen3-4B",
+    "method": "iterative_sparsegpt_recon",
+    "prune_ratio": 0.2,
+    "steps": 1,
+    "tile_size": 32,
+    "achieved_sparsity": 0.2,
+    "iter_info": {
+        "steps": 1,
+        "grams_collected": 36,
+        "increments": [
+            0.2
+        ]
+    },
+    "limit": null,
+    "perplexity": 30.95325469970703
+}

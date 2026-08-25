@@ -1,0 +1,40 @@
+{
+    "tag": "dense",
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "dense": true,
+    "method": null,
+    "prune_ratio": null,
+    "policy": null,
+    "tile_size": 32,
+    "limit": 64,
+    "pruned": null,
+    "results": {
+        "hellaswag": {
+            "name": "hellaswag",
+            "alias": "hellaswag",
+            "sample_len": 64,
+            "acc,none": 0.46875,
+            "acc_stderr,none": 0.06287092313773097,
+            "acc_norm,none": 0.65625,
+            "acc_norm_stderr,none": 0.05983919423477113
+        },
+        "piqa": {
+            "name": "piqa",
+            "alias": "piqa",
+            "sample_len": 64,
+            "acc,none": 0.78125,
+            "acc_stderr,none": 0.052083333333333336,
+            "acc_norm,none": 0.734375,
+            "acc_norm_stderr,none": 0.05564461487585784
+        },
+        "arc_easy": {
+            "name": "arc_easy",
+            "alias": "arc_easy",
+            "sample_len": 64,
+            "acc,none": 0.6875,
+            "acc_stderr,none": 0.058397074018894594,
+            "acc_norm,none": 0.703125,
+            "acc_norm_stderr,none": 0.05756159356351619
+        }
+    }
+}

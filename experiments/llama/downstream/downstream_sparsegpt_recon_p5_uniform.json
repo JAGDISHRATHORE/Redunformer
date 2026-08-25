@@ -1,0 +1,45 @@
+{
+    "tag": "sparsegpt_recon_p5_uniform",
+    "model": "meta-llama/Llama-3.2-3B-Instruct",
+    "dense": false,
+    "method": "sparsegpt_recon",
+    "prune_ratio": 0.05,
+    "policy": "uniform",
+    "tile_size": 32,
+    "limit": null,
+    "pruned": {
+        "total_tiles": 2752512,
+        "total_pruned": 137480,
+        "achieved_sparsity": 0.049947102864583336,
+        "policy_info": null
+    },
+    "results": {
+        "hellaswag": {
+            "name": "hellaswag",
+            "alias": "hellaswag",
+            "sample_len": 10042,
+            "acc,none": 0.47938657637920734,
+            "acc_stderr,none": 0.00498553915978342,
+            "acc_norm,none": 0.6581358295160327,
+            "acc_norm_stderr,none": 0.004733649274814511
+        },
+        "piqa": {
+            "name": "piqa",
+            "alias": "piqa",
+            "sample_len": 1838,
+            "acc,none": 0.7519042437431991,
+            "acc_stderr,none": 0.01007711831557471,
+            "acc_norm,none": 0.7475516866158868,
+            "acc_norm_stderr,none": 0.010135665547362354
+        },
+        "arc_easy": {
+            "name": "arc_easy",
+            "alias": "arc_easy",
+            "sample_len": 2376,
+            "acc,none": 0.6965488215488216,
+            "acc_stderr,none": 0.009433837434252272,
+            "acc_norm,none": 0.6494107744107744,
+            "acc_norm_stderr,none": 0.009791003829831557
+        }
+    }
+}
