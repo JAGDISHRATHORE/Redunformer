@@ -58,14 +58,6 @@ Random gave lower perplexity than magnitude in **144 of 196** cells. The worst m
 - Perplexity alone was not enough and the model was small, so we moved to Qwen3-4B and added Wanda, SparseGPT and
   downstream tasks.
 
-## Notes
-
-- These files were deleted from the repo during a cleanup on 18 July and restored from git history
-  (commits `68896e4` and `e3875b2`). The numbers are exactly the ones in our report (Tables 1-3).
-- The full-scan plots were redrawn with the correct baseline line (20.0445). Before, they showed the Qwen3-4B
-  baseline by mistake.
-- The full scan was a separate run from the layer study, so the numbers can differ a little in the 3rd decimal.
-
 ## How to rerun
 
 The shared runner still supports this setup:
