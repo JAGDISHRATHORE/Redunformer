@@ -1,17 +1,15 @@
-# Redunformer – Tile-level redundancy in LLMs
+# Redunformer – Reducing Tile-level redundancy in LLMs
 
-Practical Course in Artificial Intelligence, Summer Semester 2026, TU Darmstadt
-Group 4: Sebastian Fiebiger, Jagdish Dattarsingh Rathore, Ayush Pratap Singh, Venkata Anusha Vangavolu
+Practical Course in Artificial Intelligence, Summer Semester 2026, TU Darmstadt Sebastian Fiebiger, Jagdish Dattarsingh Rathore, Ayush Pratap Singh, Venkata Anusha Vangavolu
 Supervisor: Haoyi Yang
 
-## What we did
+## What we worked upon
 
-Our question was simple: how much of a language model can you delete in blocks (tiles) before it stops working?
+Our question was very simple: how much of a language model can you delete or removed  in blocks (tiles) before it stops working?
 A tile is a square block of a weight matrix (32x32 in the main experiments). Pruning a tile means setting the whole
-block to zero. We only pruned the seven linear layers inside each transformer block (`q_proj`, `k_proj`, `v_proj`,
-`o_proj`, `gate_proj`, `up_proj`, `down_proj`).
+block to zero. We only pruned the seven linear layers inside each transformer block
 
-The project ran from June to August 2026 in three stages:
+The project ran three stages:
 
 | | Model | Tile size | What it was for |
 |---|---|---|---|
@@ -21,25 +19,21 @@ The project ran from June to August 2026 in three stages:
 
 Every experiment folder has its own `SUMMARY.md` with the details.
 
-## Main results
+## what we gained based on the supervisors intructions.
 
 - Only about **5% of the 32x32 tiles** of Qwen3-4B can be removed while keeping ~90% of the ability on HellaSwag, PIQA
   and ARC-Easy. Perplexity alone made it look like 40-70% was possible.
 - **Repair matters more than selection.** After removing tiles, SparseGPT reconstruction of the remaining weights
-  brings whole-model perplexity at 5% from 20-48 (no repair) down to 14-16. How we choose the tiles matters much less.
-- **Perplexity can be misleading.** Pruning `o_proj` on a few chosen layers made WikiText perplexity better than the
+  brings whole-model perplexity at 5% from 20-48 (no repair) down to 14-16. How we then choose the tiles matters much less.
+- **Perplexity can be misleading for instances.** Pruning `o_proj` on a ffew chosen layers made WikiText perplexity better than the
   dense model (12.21 vs 13.22), while HellaSwag got slightly worse.
 - **Magnitude pruning is worse than random** at tile level (Qwen3-4B, 5%: 3449 vs ~23 perplexity).
 - **The 5% is a price for block structure.** The same repair with single weights (1x1) keeps ~100% ability up to 20%
   sparsity and ~82% at 50%. The redundancy is there, but it is spread out and not in blocks.
-- **Llama-3.2-3B shows the same ~5% limit** (89% ability kept at 5%), but it drops faster after that, and magnitude
+  **Llama-3.2-3B shows that the same ~5% limit** (89% ability kept at 5%)  but it drops faster after that, and magnitude
   pruning is not a disaster there.
 
-We first wrote the code for 64x64 tiles by mistake (a wrong default in `run_pruning.py`). We fixed it on 17 July and
-re-ran the affected Qwen3-4B runs at 32x32. The old 64x64 runs are kept in
-`experiments/experiment_2_qwen3_4b/results/legacy_tile64/`.
-
-## Folder structure
+## Folders layoutt
 
 ```
 src/redundancy/        shared code (model loading, data, perplexity, tile scores, repair, policies)
@@ -91,9 +85,9 @@ python experiments/experiment_2_qwen3_4b/analysis/make_findings_figures.py
 
 Methods for `--method`: `magnitude`, `magnitude_high`, `random`, `wanda`, `sparsegpt`, `sparsegpt_recon`,
 `wanda_recon`, `random_recon`. The `*_recon` methods remove the tiles and then repair the rest of the row with
-SparseGPT. New runs go to `experiments/new_runs/`, which is not tracked by git.
+SparseGPT.
 
-## How the result files are named
+## How the result files are named (we need the renaming for easier navigation for the supervisor :) )
 
 The name tells you what was run:
 
@@ -108,10 +102,4 @@ The name tells you what was run:
 | `us_{method}_p{P}_T1.json` | 1x1 unstructured pruning |
 | `{method}_p0.10/` folders | the sparsity level of the files inside (10%, 20%, 40%) |
 
-The tile size is not in the file name, but every JSON has a `tile_size` field.
 
-## Results in the report
-
-The results in our report were produced with the code at commit `f500f91` (branch `Jagdish-Tile`). After that we
-only moved files, renamed variables and removed comments. We checked that the code does exactly the same thing and
-that the plots come out the same.
