@@ -136,9 +136,9 @@ def f2_perplexity_scissors():
     ux, uy = zip(*uni)
 
     game = [
-        (ppl_of(load("experiments/experiment_2_qwen3_4b/results/legacy_tile64/oproj_targeted/wholemodel_wanda_p20.json")) / DENSE_WT,
+        (ppl_of(load("experiments/experiment_2_qwen3_4b/results/07_oproj_targeting/targeted_layers/wholemodel_wanda_p20.json")) / DENSE_WT,
          hs_ret("experiments/experiment_2_qwen3_4b/results/07_oproj_targeting/downstream/downstream_oproj_targeted_wanda_p20.json"), "20% dose"),
-        (ppl_of(load("experiments/experiment_2_qwen3_4b/results/legacy_tile64/oproj_targeted/wholemodel_wanda_p40.json")) / DENSE_WT,
+        (ppl_of(load("experiments/experiment_2_qwen3_4b/results/07_oproj_targeting/targeted_layers/wholemodel_wanda_p40.json")) / DENSE_WT,
          hs_ret("experiments/experiment_2_qwen3_4b/results/07_oproj_targeting/downstream/downstream_oproj_targeted_wanda_p40.json"), "40% dose"),
     ]
 
@@ -159,7 +159,7 @@ def f2_perplexity_scissors():
     gx = [g[0] for g in game]
     gy = [g[1] for g in game]
     ax.plot(gx, gy, "D", color=VERM, ms=12, zorder=6, markerfacecolor="white",
-            markeredgewidth=2.2, label="o_proj gaming (tile-64 ppl / tile-32 HellaSwag)")
+            markeredgewidth=2.2, label="o_proj gaming (tile-32 ppl / tile-32 HellaSwag)")
     ax.annotate("20% dose", xy=(game[0][0], game[0][1]), xytext=(8, 7),
                 textcoords="offset points", fontsize=8.4, color=VERM, fontweight="bold")
     ax.annotate("40% dose", xy=(game[1][0], game[1][1]), xytext=(-1, -15),
