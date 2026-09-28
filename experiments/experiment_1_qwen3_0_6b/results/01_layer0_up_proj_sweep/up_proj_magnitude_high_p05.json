@@ -1,0 +1,13 @@
+{
+    "model": "Qwen/Qwen3-0.6B",
+    "dataset": "wikitext",
+    "subset": "wikitext-2-raw-v1",
+    "target_matrix": "model.layers.0.mlp.up_proj.weight",
+    "tile_size": 64,
+    "prune_ratio": 0.05,
+    "num_tiles": 768,
+    "num_pruned": 38,
+    "method": "magnitude_high",
+    "seed": null,
+    "perplexity": 20.076332092285156
+}

@@ -1,20 +1,3 @@
-"""
-Sensitivity-aware pruning policy (Rathore Strategy 5, Policy B).
-
-Policy A (uniform) prunes every matrix at the same sparsity. Policy B instead spends
-the SAME global tile budget unevenly: less on sensitive regions, more on redundant
-ones. The budget matching is what makes the comparison fair -- both policies remove
-approximately the same total number of tiles.
-
-Pipeline:
-  1. load_sensitivity()  - per (layer, matrix) damage from the screening runs
-  2. classify()          - sensitive / moderate / robust
-  3. expand_to_model()   - our screening measured only a few layers; map every layer
-                           to its nearest measured layer's class
-  4. allocate()          - solve for the scale that makes the tile-weighted mean
-                           sparsity equal the target (bisection, respects a cap)
-"""
-
 import json
 import glob
 import os
@@ -22,8 +5,7 @@ import os
 SENSITIVE, MODERATE, ROBUST = "sensitive", "moderate", "robust"
 
 
-def load_sensitivity(screen_dir, method="sparsegpt_recon", ref_ratio="0.20", dense_ppl=13.559):
-    """{(layer, matrix): delta_ppl} from the screening JSONs of one method/sparsity."""
+def load_sens(screen_dir, method="sparsegpt_recon", ref_ratio="0.20", dense_ppl=13.559):
     sens = {}
     for f in glob.glob(os.path.join(screen_dir, f"{method}_p{ref_ratio}", "layer*.json")):
         d = json.load(open(f))
@@ -34,54 +16,42 @@ def load_sensitivity(screen_dir, method="sparsegpt_recon", ref_ratio="0.20", den
     return sens
 
 
-def classify(sens, sensitive_thr=0.30, moderate_thr=0.05):
-    """Bucket each measured (layer, matrix) by how much pruning it hurt."""
+def classify(sens, hi_thr=0.30, lo_thr=0.05):
     out = {}
     for k, v in sens.items():
-        if v >= sensitive_thr:
+        if v >= hi_thr:
             out[k] = SENSITIVE
-        elif v >= moderate_thr:
+        elif v >= lo_thr:
             out[k] = MODERATE
         else:
             out[k] = ROBUST
     return out
 
 
-def nearest_measured(layer, measured):
+def nearest_layer(layer, measured):
     return min(measured, key=lambda m: abs(m - layer))
 
 
-def expand_to_model(classes, all_layers, matrices, measured):
-    """Assign a class to every (layer, matrix) in the model.
-
-    The screening only measured a few representative layers, so each unmeasured layer
-    inherits the class of the nearest measured layer (per matrix type).
-    """
+def fill_all_layers(classes, layer_list, matrices, measured):
     full = {}
-    for layer in all_layers:
-        src = nearest_measured(layer, measured)
+    for layer in layer_list:
+        src = nearest_layer(layer, measured)
         for m in matrices:
             full[(layer, m)] = classes.get((src, m), ROBUST)
     return full
 
 
-def allocate(classes_full, tiles, target_sparsity,
-             mults=None, max_ratio=0.95, tol=1e-6):
-    """Per-(layer,matrix) ratios whose TILE-WEIGHTED MEAN equals target_sparsity.
-
-    tiles: {(layer, matrix): num_full_tiles}
-    Returns ({(layer,matrix): ratio}, info dict).
-    """
+def allocate_budget(cls_all, tiles, target,
+                    mults=None, max_ratio=0.95, tol=1e-6):
     if mults is None:
         mults = {SENSITIVE: 0.30, MODERATE: 1.00, ROBUST: 1.60}
 
-    total_tiles = sum(tiles.values())
-    budget = target_sparsity * total_tiles
+    n_total = sum(tiles.values())
+    budget = target * n_total
 
     def removed(scale):
-        return sum(min(mults[classes_full[k]] * scale, max_ratio) * n for k, n in tiles.items())
+        return sum(min(mults[cls_all[k]] * scale, max_ratio) * n for k, n in tiles.items())
 
-    # Bisect on the scale factor until the removed-tile count matches the budget.
     lo, hi = 0.0, max_ratio / min(mults.values()) + 1.0
     for _ in range(200):
         mid = (lo + hi) / 2
@@ -89,19 +59,19 @@ def allocate(classes_full, tiles, target_sparsity,
             lo = mid
         else:
             hi = mid
-        if abs(removed(mid) - budget) <= tol * total_tiles:
+        if abs(removed(mid) - budget) <= tol * n_total:
             break
     scale = (lo + hi) / 2
 
-    ratios = {k: min(mults[classes_full[k]] * scale, max_ratio) for k in tiles}
-    achieved = removed(scale) / total_tiles
-    per_class = {}
+    ratios = {k: min(mults[cls_all[k]] * scale, max_ratio) for k in tiles}
+    achieved = removed(scale) / n_total
+    by_class = {}
     for c in (SENSITIVE, MODERATE, ROBUST):
-        ks = [k for k in tiles if classes_full[k] == c]
+        ks = [k for k in tiles if cls_all[k] == c]
         if ks:
-            per_class[c] = {
+            by_class[c] = {
                 "ratio": min(mults[c] * scale, max_ratio),
                 "matrices": len(ks),
                 "tiles": sum(tiles[k] for k in ks),
             }
-    return ratios, {"target": target_sparsity, "achieved": achieved, "scale": scale, "per_class": per_class}
+    return ratios, {"target": target, "achieved": achieved, "scale": scale, "per_class": by_class}

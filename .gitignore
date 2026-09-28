@@ -1,63 +1,29 @@
-# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *$py.class
 
-# Virtual environments
 .venv/
 venv/
 env/
 ENV/
 
-# Distribution / packaging
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
-
-# Jupyter Notebook
 .ipynb_checkpoints
 
-# OS generated files
 .DS_Store
-.DS_Store?
 ._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
-# IDEs
 .vscode/
 .idea/
 *.swp
-*.swo
 
-# Project specific ignores
-# Run logs: large, noisy, and fully reproducible from the saved JSON results.
 *.log
+experiments/new_runs/
 
-# Ignore output files but keep the directories
-!experiments/.gitkeep
 models/*
 !models/.gitkeep
 datasets/*
 !datasets/.gitkeep
-
-# run logs and local artifacts (do not commit)
-*.log
-
-# personal draft docs (do not commit)
-Fiebiger_Evaluation_Extensions.pdf
-Fiebiger_Evaluation_Extensions.tex
